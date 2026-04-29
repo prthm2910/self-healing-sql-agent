@@ -6,28 +6,35 @@ from typing import List, Dict, Any, Optional
 
 load_dotenv()
 
+from src.utils.logger import logger
+
 class SQLEngine:
     def __init__(self, db_name: str = "pagila"):
         base_url = os.getenv("DATABASE_URL")
         if not base_url:
+            logger.error("DATABASE_URL not found in environment")
             raise ValueError("DATABASE_URL not found in environment")
         
         # Replace default db with target db
         self.connection_url = base_url.rsplit("/", 1)[0] + f"/{db_name}"
+        logger.debug(f"SQLEngine initialized for database: {db_name}")
         
     def execute_query(self, query: str) -> Dict[str, Any]:
         """
         Executes a SQL query and returns results or a detailed error.
         """
+        logger.info(f"Executing SQL Query: {query}")
         try:
             with psycopg.connect(self.connection_url, row_factory=dict_row) as conn:
                 results = conn.execute(query).fetchall()
+                logger.info(f"Query successful. Rows returned: {len(results)}")
                 return {
                     "status": "success",
                     "data": results,
                     "row_count": len(results)
                 }
         except Exception as e:
+            logger.error(f"SQL Execution Failed. Error: {str(e)} | Query: {query}")
             return {
                 "status": "error",
                 "error_message": str(e),
@@ -37,8 +44,8 @@ class SQLEngine:
     def get_schema(self, table_names: Optional[List[str]] = None) -> str:
         """
         Returns the DDL/Schema for the requested tables.
-        If None, returns schema for all public tables.
         """
+        logger.debug(f"Retrieving schema for tables: {table_names if table_names else 'ALL'}")
         query = """
             SELECT table_name, column_name, data_type 
             FROM information_schema.columns 
