@@ -1,12 +1,12 @@
 import os
 import psycopg
+from psycopg_pool import ConnectionPool
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
+from src.utils.logger import logger
 
 load_dotenv()
-
-from src.utils.logger import logger
 
 class SQLEngine:
     def __init__(self, db_name: str = "pagila"):
@@ -15,17 +15,25 @@ class SQLEngine:
             logger.error("DATABASE_URL not found in environment")
             raise ValueError("DATABASE_URL not found in environment")
         
-        # Replace default db with target db
+        # Create a dedicated pool for the specific database (e.g. pagila)
         self.connection_url = base_url.rsplit("/", 1)[0] + f"/{db_name}"
-        logger.debug(f"SQLEngine initialized for database: {db_name}")
+        
+        self.pool = ConnectionPool(
+            conninfo=self.connection_url,
+            max_size=10,
+            min_size=1,
+            check=ConnectionPool.check_connection, # PRO FIX: Verify health
+            kwargs={"autocommit": True, "row_factory": dict_row}
+        )
+        logger.debug(f"SQLEngine initialized with pool for: {db_name}")
         
     def execute_query(self, query: str) -> Dict[str, Any]:
         """
-        Executes a SQL query and returns results or a detailed error.
+        Executes a SQL query using the pool and returns results or a detailed error.
         """
         logger.info(f"Executing SQL Query: {query}")
         try:
-            with psycopg.connect(self.connection_url, row_factory=dict_row) as conn:
+            with self.pool.connection() as conn:
                 results = conn.execute(query).fetchall()
                 logger.info(f"Query successful. Rows returned: {len(results)}")
                 return {
@@ -58,7 +66,7 @@ class SQLEngine:
         query += " ORDER BY table_name, ordinal_position"
         
         try:
-            with psycopg.connect(self.connection_url, row_factory=dict_row) as conn:
+            with self.pool.connection() as conn:
                 columns = conn.execute(query).fetchall()
                 
                 schema_parts = []
@@ -80,9 +88,9 @@ class SQLEngine:
         """
         query = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
         try:
-            with psycopg.connect(self.connection_url) as conn:
+            with self.pool.connection() as conn:
                 tables = conn.execute(query).fetchall()
-                return [t[0] for t in tables]
+                return [t["table_name"] for t in tables]
         except Exception as e:
             print(f"Error listing tables: {e}")
             return []

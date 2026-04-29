@@ -5,11 +5,12 @@ from psycopg_pool import ConnectionPool
 
 from src.core.config import settings
 
-
-# Global Connection Pool Constant
+# Global Connection Pool with Health Checks
 DB_POOL = ConnectionPool(
     conninfo=settings.database_url, 
-    max_size=20, 
+    max_size=20,
+    min_size=1, # Keep at least one connection warm
+    check=ConnectionPool.check_connection, # PRO FIX: Verify health before use
     kwargs={"autocommit": True}
 )
 
