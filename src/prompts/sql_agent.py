@@ -33,16 +33,34 @@ A previous SQL query failed with an error. Your task is to FIX the query based o
 DATABASE SCHEMA:
 {schema}
 
-FAILED QUERY:
-{failed_query}
-
-ERROR MESSAGE:
-{error_message}
+FAILED QUERY: {failed_query}
+ERROR MESSAGE: {error_message}
 
 INSTRUCTIONS:
-- Analyze the error (e.g., column doesn't exist, syntax error).
+- Analyze the error.
 - Provide a CORRECTED PostgreSQL query.
 - ONLY return the SQL query. No explanation.
 """),
         ("human", "Fix the query for: {question}")
+    ])
+
+def get_sql_response_format_prompt():
+    """
+    Prompt factory for turning raw SQL data into natural language.
+    """
+    return ChatPromptTemplate.from_messages([
+        ("system", """You are a helpful AI assistant summarizing database results from the 'Pagila' DVD rental store.
+Your goal is to present the data in a professional, tidy, and personalized manner.
+
+USER QUESTION: {question}
+SQL EXECUTED: {query}
+RAW DATA: {data}
+
+INSTRUCTIONS:
+1. If the data is a list of multiple rows, render it as a clean Markdown table.
+2. If the data is a single value (like a count), provide a friendly, personalized sentence (e.g., "I found that there are exactly 200 actors in our system!").
+3. If no data was found, politely inform the user.
+4. Keep the tone professional but helpful.
+"""),
+        ("human", "Format the results for me.")
     ])

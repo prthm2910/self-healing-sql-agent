@@ -1,7 +1,11 @@
 from langchain_core.runnables import RunnableConfig
 from src.services.llm import get_chat_model
 from src.services.sql_engine import sql_engine
-from src.prompts.sql_agent import get_sql_generation_prompt, get_sql_healing_prompt
+from src.prompts.sql_agent import (
+    get_sql_generation_prompt, 
+    get_sql_healing_prompt, 
+    get_sql_response_format_prompt
+)
 from src.prompts.assistant import get_assistant_prompt
 from src.core.config import settings
 from src.workflow.state import State
@@ -114,13 +118,17 @@ def heal_sql_node(state: State):
 
 def format_sql_response_node(state: State):
     """
-    Formats the final SQL results into a natural language message.
+    Uses an LLM to format SQL results into natural language with Markdown tables.
     """
     logger.info("Node: format_sql_response")
-    if not state["sql_results"]:
-        content = f"I ran the query but found no results.\nSQL: `{state['current_sql']}`"
-    else:
-        data_str = str(state["sql_results"][:5]) 
-        content = f"Here is what I found in the database:\n{data_str}\n\n(Total rows: {len(state['sql_results'])})"
-        
-    return {"messages": [AIMessage(content=content)]}
+    prompt_template = get_sql_response_format_prompt()
+    user_question = next(m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage))
+
+    chain = prompt_template | chat_model
+    response = chain.invoke({
+        "question": user_question,
+        "query": state["current_sql"],
+        "data": str(state["sql_results"])
+    })
+
+    return {"messages": [AIMessage(content=response.content)]}
