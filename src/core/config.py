@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     default_user_id: str = "user_123"
     memory_tag: str = "[MEMORIZE]"
     rate_limit_rpm: int = 30
+    context_window_size: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

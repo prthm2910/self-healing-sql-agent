@@ -49,7 +49,7 @@ def call_chatbot(state: State, config: RunnableConfig, store=None):
     prompt_template = get_assistant_prompt()
     
     # 3. Sliding Window (last 20 messages)
-    context_window = state["messages"][-20:] if len(state["messages"]) > 20 else state["messages"]
+    context_window = state["messages"][-settings.context_window_size:] if len(state["messages"]) > settings.context_window_size else state["messages"]
     
     # 4. Format and Invoke
     chain = prompt_template | llm
