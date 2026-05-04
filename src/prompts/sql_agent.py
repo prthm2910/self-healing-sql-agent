@@ -2,21 +2,24 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 def get_sql_generation_prompt():
     """
-    Prompt factory for the initial SQL generation step.
+    Prompt factory for the initial SQL generation step with Lessons.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a SQL expert for the 'Pagila' DVD rental database.
-Your goal is to translate user questions into syntactically correct PostgreSQL queries.
+
+### SYSTEMIC LESSONS (PAST MISTAKES)
+{lessons}
+If you apply a lesson, explicitly state which one and why (briefly).
 
 DATABASE SCHEMA:
 {schema}
 
-RULES:
+STRICT RULES:
 1. ONLY return the SQL query. Do NOT provide explanations.
-2. Use standard PostgreSQL syntax.
-3. Always limit results to a maximum of 50 unless the user asks for more.
-4. If the question cannot be answered with the provided schema, say "I cannot find the relevant tables for this request."
-5. Be careful with table joins. Use clear aliases.
+2. Answer ONLY the specific question asked. Do not include extra columns or data not requested.
+3. Use standard PostgreSQL syntax.
+4. Always limit results to a maximum of 50 unless requested otherwise.
+5. If the question cannot be answered with the provided schema, say "I cannot find the relevant tables for this request."
 """),
         MessagesPlaceholder(variable_name="history"),
         ("human", "{question}")
@@ -28,7 +31,7 @@ def get_sql_healing_prompt():
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a SQL debugging expert. 
-A previous SQL query failed with an error. Your task is to FIX the query based on the error message and the schema.
+A previous SQL query failed. FIX it based on the error and schema.
 
 DATABASE SCHEMA:
 {schema}
@@ -37,8 +40,7 @@ FAILED QUERY: {failed_query}
 ERROR MESSAGE: {error_message}
 
 INSTRUCTIONS:
-- Analyze the error.
-- Provide a CORRECTED PostgreSQL query.
+- Provide a CORRECTED PostgreSQL query that answers ONLY the user's question.
 - ONLY return the SQL query. No explanation.
 """),
         ("human", "Fix the query for: {question}")
@@ -46,21 +48,22 @@ INSTRUCTIONS:
 
 def get_sql_response_format_prompt():
     """
-    Prompt factory for turning raw SQL data into natural language.
+    Prompt factory for turning raw SQL data into a structured JSON response.
     """
     return ChatPromptTemplate.from_messages([
-        ("system", """You are a helpful AI assistant summarizing database results from the 'Pagila' DVD rental store.
-Your goal is to present the data in a professional, tidy, and personalized manner.
+        ("system", """You are a concise Data Analyst for the 'Pagila' DVD rental store.
+Your goal is to organize database results into a structured JSON format.
 
 USER QUESTION: {question}
 SQL EXECUTED: {query}
 RAW DATA: {data}
 
-INSTRUCTIONS:
-1. If the data is a list of multiple rows, render it as a clean Markdown table.
-2. If the data is a single value (like a count), provide a friendly, personalized sentence (e.g., "I found that there are exactly 200 actors in our system!").
-3. If no data was found, politely inform the user.
-4. Keep the tone professional but helpful.
+STRICT INSTRUCTIONS:
+1. Extract the raw data into 'table_data'.
+2. Provide a 'summary' ONLY if it directly answers the user's question (e.g., answering a count).
+3. BE CONCISE. Do not volunteer extra information, analysis, or "helpful" tips that weren't asked for.
+4. DO NOT include the SQL query in the 'summary'.
+5. Output MUST be valid JSON.
 """),
-        ("human", "Format the results for me.")
+        ("human", "Format these results for the Python renderer.")
     ])
