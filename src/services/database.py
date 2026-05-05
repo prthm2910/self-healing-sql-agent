@@ -1,10 +1,15 @@
 import os
+import threading
+
 import psycopg
 from psycopg_pool import ConnectionPool
+
 from src.core.config import settings
 from src.utils.logger import logger
 
+
 _DB_POOL = None
+_POOL_LOCK = threading.Lock()
 
 def get_connection_pool():
     """
@@ -12,20 +17,22 @@ def get_connection_pool():
     """
     global _DB_POOL
     if _DB_POOL is None:
-        logger.info("Initializing database connection pool...")
-        try:
-            _DB_POOL = ConnectionPool(
-                conninfo=settings.database_url, 
-                max_size=2, 
-                min_size=1,
-                timeout=60.0,
-                check=ConnectionPool.check_connection,
-                kwargs={"autocommit": True}
-            )
-            logger.info("Database connection pool initialized successfully.")
-        except Exception as e:
-            logger.error(f"Failed to initialize database connection pool: {e}", exc_info=True)
-            raise
+        with _POOL_LOCK:
+            if _DB_POOL is None:
+                logger.info("Initializing database connection pool...")
+                try:
+                    _DB_POOL = ConnectionPool(
+                        conninfo=settings.database_url, 
+                        max_size=2, 
+                        min_size=1,
+                        timeout=60.0,
+                        check=ConnectionPool.check_connection,
+                        kwargs={"autocommit": True}
+                    )
+                    logger.info("Database connection pool initialized successfully.")
+                except Exception as e:
+                    logger.error(f"Failed to initialize database connection pool: {e}", exc_info=True)
+                    raise
     return _DB_POOL
 
 def delete_thread_data(user_id: str, thread_id: str, store):
