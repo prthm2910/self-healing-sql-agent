@@ -9,6 +9,10 @@ from src.ui.components import render_sidebar, save_thread_metadata
 from src.utils.limiter import rate_limiter
 from src.workflow.builder import build_chatbot_graph
 from src.utils.logger import logger, log_context
+from langsmith import Client
+
+# Initialize LangSmith client for tracing
+ls_client = Client()
 
 # Page Config
 st.set_page_config(page_title="Personalized AI Assistant", page_icon="🧠", layout="wide")
