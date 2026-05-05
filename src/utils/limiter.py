@@ -1,26 +1,37 @@
 import time
-
-import streamlit as st
-
+import threading
 from src.core.config import settings
 
+class GlobalRateLimiter:
+    """
+    A thread-safe Global Rate Limiter to manage multi-agent API usage.
+    Ensures total requests stay under the given RPM cap.
+    """
+    def __init__(self, rpm_limit: int):
+        self.rpm_limit = rpm_limit
+        self.requests = []
+        self.lock = threading.Lock()
 
-def check_rate_limit():
-    """Returns True if user is within the RPM limit defined in settings."""
-    if "request_timestamps" not in st.session_state:
-        st.session_state.request_timestamps = []
-        
-    now = time.time()
-    # Remove timestamps older than 60 seconds
-    st.session_state.request_timestamps = [
-        t for t in st.session_state.request_timestamps if now - t < 60
-    ]
-    
-    if len(st.session_state.request_timestamps) >= settings.rate_limit_rpm:
-        return False
-    return True
+    def check_and_record(self) -> bool:
+        """
+        Checks if a request is allowed and records it if so.
+        """
+        with self.lock:
+            now = time.time()
+            # Clean up old timestamps (older than 60s)
+            self.requests = [t for t in self.requests if now - t < 60]
+            
+            if len(self.requests) >= self.rpm_limit:
+                return False
+            
+            self.requests.append(now)
+            return True
 
+    def get_current_load(self) -> int:
+        with self.lock:
+            now = time.time()
+            self.requests = [t for t in self.requests if now - t < 60]
+            return len(self.requests)
 
-def record_request():
-    """Logs a new request timestamp."""
-    st.session_state.request_timestamps.append(time.time())
+# Singleton Instance for the entire App
+rate_limiter = GlobalRateLimiter(rpm_limit=35)
