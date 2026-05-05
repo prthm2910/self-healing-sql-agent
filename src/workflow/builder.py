@@ -6,7 +6,9 @@ from langgraph.store.postgres import PostgresStore
 from src.workflow.state import State
 from src.workflow.nodes import (
     guardian_node,
-    call_chatbot,
+    classifier_node,
+    clarify_node,
+    schema_selector_node,
     generate_sql_node, 
     execute_sql_node, 
     heal_sql_node, 
@@ -16,19 +18,22 @@ from src.services.database import get_connection_pool
 from src.services.embeddings import get_embeddings_provider
 from src.core.config import settings
 
-def main_router(state: State) -> Literal["generate_sql", "chatbot", "end"]:
+def guardian_router(state: State) -> Literal["classifier", "clarify", "end"]:
     """
     Primary router based on Guardian intent.
     """
-    intent = state.get("intent", "chat")
-    
-    if intent == "blocked" or intent == "irrelevant":
-        return "end"
-    
-    if intent == "sql":
-        return "generate_sql"
-        
-    return "chatbot"
+    intent = state.get("intent", "DENY")
+    if intent == "SQL":
+        return "classifier"
+    if intent == "CLARIFY":
+        return "clarify"
+    return "end"
+
+def classifier_router(state: State) -> Literal["generate_sql", "schema_selector"]:
+    """Routes based on query complexity."""
+    if state.get("is_complex"):
+        return "schema_selector"
+    return "generate_sql"
 
 def healing_router(state: State) -> Literal["heal_sql", "format_response"]:
     if state.get("sql_error"):
@@ -55,9 +60,9 @@ def build_chatbot_graph():
 
     # 1. Add Nodes
     builder.add_node("guardian", guardian_node)
-    
-    # 2. Add Existing Nodes
-    builder.add_node("chatbot", call_chatbot)
+    builder.add_node("classifier", classifier_node)
+    builder.add_node("clarify", clarify_node)
+    builder.add_node("schema_selector", schema_selector_node)
     builder.add_node("generate_sql", generate_sql_node)
     builder.add_node("execute_sql", execute_sql_node)
     builder.add_node("heal_sql", heal_sql_node)
@@ -66,13 +71,21 @@ def build_chatbot_graph():
     # --- Defined Logic ---
     builder.add_edge(START, "guardian")
     
-    builder.add_conditional_edges("guardian", main_router, {
-        "generate_sql": "generate_sql",
-        "chatbot": "chatbot",
+    builder.add_conditional_edges("guardian", guardian_router, {
+        "classifier": "classifier",
+        "clarify": "clarify",
         "end": END
     })
 
-    builder.add_edge("chatbot", END)
+    # Clarification node just asks the question and ends the turn
+    builder.add_edge("clarify", END)
+
+    builder.add_conditional_edges("classifier", classifier_router, {
+        "schema_selector": "schema_selector",
+        "generate_sql": "generate_sql"
+    })
+
+    builder.add_edge("schema_selector", "generate_sql")
     builder.add_edge("generate_sql", "execute_sql")
 
     builder.add_conditional_edges("execute_sql", healing_router, {
