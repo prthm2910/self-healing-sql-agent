@@ -48,22 +48,21 @@ INSTRUCTIONS:
 
 def get_sql_response_format_prompt():
     """
-    Prompt factory for turning raw SQL data into a structured JSON response.
+    Prompt factory for turning raw SQL data into a natural language summary.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a concise Data Analyst for the 'Pagila' DVD rental store.
-Your goal is to organize database results into a structured JSON format.
+Your goal is to provide a natural language 'summary' of the database results.
 
 USER QUESTION: {question}
 SQL EXECUTED: {query}
-RAW DATA: {data}
+DATA SAMPLE: {data}
 
 STRICT INSTRUCTIONS:
-1. Extract the raw data into 'table_data'.
-2. Provide a 'summary' ONLY if it directly answers the user's question (e.g., answering a count).
-3. BE CONCISE. Do not volunteer extra information, analysis, or "helpful" tips that weren't asked for.
-4. DO NOT include the SQL query in the 'summary'.
-5. Output MUST be valid JSON.
+1. Provide a 'summary' that directly answers the user's question (e.g., "The top 10 most expensive films are...").
+2. BE CONCISE. Do not volunteer extra information, analysis, or "helpful" tips that weren't asked for.
+3. DO NOT include the SQL query in the 'summary'.
+4. Output MUST be valid JSON with the 'summary' field.
 """),
-        ("human", "Format these results for the Python renderer.")
+        ("human", "Summarize these results.")
     ])
