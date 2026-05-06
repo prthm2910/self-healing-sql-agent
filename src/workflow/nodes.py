@@ -224,17 +224,17 @@ def schema_selector_node(state: State, config: RunnableConfig, store=None):
         last_msg = state["messages"][-1].content
         all_tables = sql_engine.list_tables()
         
-        # 1. Anchor Identification (Flash)
+        # 1. Anchor Identification
         anchor_prompt = f"""Given the user question and the list of tables, select the 2-3 most relevant 'Anchor' tables.
 Question: "{last_msg}"
 Tables: {all_tables}
-
-Return a comma-separated list of table names.
 """
-        anchors_raw = llm.invoke([SystemMessage(content=anchor_prompt)]).content.strip()
-        anchors = [a.strip() for a in anchors_raw.split(",") if a.strip() in all_tables]
+        # Use structured output to avoid brittle split(",")
+        anchor_chain = llm.with_structured_output(AnchorSelection)
+        anchor_res = anchor_chain.invoke([SystemMessage(content=anchor_prompt)])
+        anchors = [a for a in anchor_res.anchors if a in all_tables]
         
-        logger.info(f"Anchors Identified: {anchors}")
+        logger.info(f"Anchors Identified: {anchors} | Thought: {getattr(anchor_res, 'thought_process', 'N/A')}")
         
         # 2. Deterministic FK Bridge Traversal (Python)
         bridges = sql_engine.get_bridge_tables(anchors)
@@ -242,7 +242,7 @@ Return a comma-separated list of table names.
         
         logger.info(f"Bridges Found: {bridges} | Total Tables: {selected_tables}")
         
-        # 3. Column Pruning (Flash)
+        # 3. Column Pruning
         # Fetch partial schema for the selected tables
         partial_schema = sql_engine.get_schema(selected_tables)
         
