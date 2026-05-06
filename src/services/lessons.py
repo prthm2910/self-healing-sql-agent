@@ -95,14 +95,3 @@ def list_all_lessons(store) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Failed to list lessons: {e}")
     return all_lessons
-
-def delete_lesson(store, lesson_id: str, lesson_type: str):
-    """Deletes a specific lesson."""
-    if store is None:
-        return
-    try:
-        namespace = ("global", "lessons", lesson_type)
-        store.delete(namespace, lesson_id)
-        logger.info(f"Deleted lesson: {lesson_id} from {lesson_type}")
-    except Exception as e:
-        logger.error(f"Failed to delete lesson: {e}")
