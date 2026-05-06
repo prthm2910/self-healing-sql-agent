@@ -1,7 +1,7 @@
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from src.services.llm import get_chat_model
+from src.services.llm import get_llm
 from src.services.sql_engine import sql_engine
 from src.prompts.sql_agent import (
     get_sql_generation_prompt, 
@@ -24,9 +24,8 @@ from src.workflow.schema import (
     SchemaSelectorOutput
 )
 
-# Initialize models
-chat_model = get_chat_model()
-small_model = get_chat_model(is_flash=True)
+# Initialize single 8B model for ALL tasks
+llm = get_llm()
 
 def call_chatbot(state: State, config: RunnableConfig, store=None):
     """
@@ -61,7 +60,7 @@ def call_chatbot(state: State, config: RunnableConfig, store=None):
 
         # --- ASSEMBLE & INVOKE ---
         prompt_template = get_assistant_prompt()
-        chain = prompt_template | chat_model
+        chain = prompt_template | llm
         
         logger.info(f"Chatbot Node | Memory: {len(memories)} | Lessons: {len(applied_titles)} {applied_titles if applied_titles else ''}")
         
@@ -135,7 +134,7 @@ DOMAIN SUMMARY:
 User Message: "{last_msg}"
 """
         # Use structured output for determinism
-        chain = small_model.with_structured_output(GuardianOutput)
+        chain = llm.with_structured_output(GuardianOutput)
         res = chain.invoke([SystemMessage(content=decision_prompt)])
         res.node_name = "guardian"
         
@@ -196,7 +195,7 @@ User Question: "{last_msg}"
 
 NOTE: Sorting or limiting on a single table is STILL SIMPLE.
 """
-        chain = small_model.with_structured_output(ClassifierOutput)
+        chain = llm.with_structured_output(ClassifierOutput)
         res = chain.invoke([SystemMessage(content=prompt)])
         res.node_name = "classifier"
         
@@ -214,7 +213,7 @@ def clarify_node(state: State, config: RunnableConfig):
     logger.info("Node: clarify_node")
     # We can use an LLM to generate a helpful clarification question
     prompt = f"The user asked: '{state['messages'][-1].content}'. This is too vague for a SQL query. Ask a concise follow-up question to clarify what they want to see from the DVD rental database."
-    response = small_model.invoke(prompt)
+    response = llm.invoke(prompt)
     return {"messages": [AIMessage(content=response.content)]}
 
 def schema_selector_node(state: State, config: RunnableConfig, store=None):
@@ -235,7 +234,7 @@ Tables: {all_tables}
 
 Return a comma-separated list of table names.
 """
-        anchors_raw = small_model.invoke([SystemMessage(content=anchor_prompt)]).content.strip()
+        anchors_raw = llm.invoke([SystemMessage(content=anchor_prompt)]).content.strip()
         anchors = [a.strip() for a in anchors_raw.split(",") if a.strip() in all_tables]
         
         logger.info(f"Anchors Identified: {anchors}")
@@ -255,7 +254,7 @@ Question: "{last_msg}"
 Schema:
 {partial_schema}
 """
-        chain = small_model.with_structured_output(SchemaSelectorOutput)
+        chain = llm.with_structured_output(SchemaSelectorOutput)
         res = chain.invoke([SystemMessage(content=pruning_prompt)])
         res.node_name = "schema_selector"
         res.selected_tables = selected_tables
@@ -304,14 +303,9 @@ def generate_sql_node(state: State, config: RunnableConfig, store=None):
 
         prompt_template = get_sql_generation_prompt()
         
-        # Phase 4: Tiered Model Selection
-        # Use small_model (Flash) for SIMPLE queries, chat_model (Pro) for COMPLEX
-        model = chat_model if state.get("is_complex") else small_model
-        # NOTE: model_name and model attributes vary across LangChain providers (e.g., OpenAI vs Anthropic vs Google).
-        # We use getattr to safely resolve the model string for logging and debugging regardless of the provider used.
-        logger.info(f"Using model: {model.model_name or model.model}")
+        logger.info(f"Using model: {llm.model_name}")
         
-        chain = prompt_template | model
+        chain = prompt_template | llm
         
         response = chain.invoke({
             "schema": schema_str,
@@ -378,7 +372,7 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
             schema_str = str(schema_obj)
         
         prompt_template = get_sql_healing_prompt()
-        chain = prompt_template | chat_model
+        chain = prompt_template | llm
         response = chain.invoke({
             "schema": schema_str,
             "failed_query": state["current_sql"],
@@ -396,7 +390,7 @@ Error: {state['sql_error']}
 Fix: {fixed_sql}
 Tables involved: {selected_tables or 'unknown'}
 """
-                distiller = small_model.with_structured_output(LessonDistillationOutput)
+                distiller = llm.with_structured_output(LessonDistillationOutput)
                 lesson = distiller.invoke([SystemMessage(content=learning_prompt)])
                 lesson.node_name = "lesson_distiller"
                 
@@ -444,8 +438,8 @@ def format_sql_response_node(state: State, config: RunnableConfig):
         
         # 2. Invoke Flash Model for Summary
         prompt_template = get_sql_response_format_prompt()
-        # Explicitly use small_model (Flash 8B) for speed
-        chain = prompt_template | small_model.with_structured_output(SQLResponse)
+        # Explicitly use llm (Flash 8B) for speed
+        chain = prompt_template | llm.with_structured_output(SQLResponse)
         
         try:
             response = chain.invoke({

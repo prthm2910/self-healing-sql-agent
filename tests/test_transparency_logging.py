@@ -45,7 +45,7 @@ def test_get_relevant_lessons_no_results():
     assert titles == []
     assert len(titles) == 0
 
-@patch("src.workflow.nodes.get_chat_model")
+@patch("src.workflow.nodes.get_llm")
 @patch("src.workflow.nodes.get_assistant_prompt")
 @patch("src.workflow.nodes.logger")
 def test_chatbot_node_logging(mock_logger, mock_get_prompt, mock_get_model):
