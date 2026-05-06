@@ -29,6 +29,41 @@ class SchemaSelectorOutput(BaseNodeOutput):
     selected_columns: Dict[str, List[str]] = Field(default_factory=dict, description="Mapping of table names to relevant columns.")
     fk_path_identified: str = Field("", description="Natural language description of the identified join path.")
 
+class AnchorSelection(BaseModel):
+    """
+    Structured internal output for identifying anchor tables.
+    """
+    anchors: List[str] = Field(..., description="List of the 2-3 most relevant anchor tables.")
+    thought_process: str = Field("", description="Internal reasoning for selection.")
+
+class ClarificationOutput(BaseModel):
+    """
+    Structured output for generating clarification questions.
+    """
+    clarification_question: str = Field(..., description="The concise follow-up question for the user.")
+
+class SQLGenerationOutput(BaseModel):
+    """
+    Structured output for generating or healing SQL.
+    """
+    sql: str = Field(..., description="The generated or corrected SQL query.")
+
+class ExecuteSQLOutput(BaseModel):
+    """
+    Structured internal result for SQL execution (non-LLM).
+    """
+    status: str
+    data: List[Dict[str, Any]] = Field(default_factory=list)
+    row_count: int = 0
+    is_aggregated: bool = False
+    error_message: Optional[str] = None
+
+class ChatbotResponse(BaseNodeOutput):
+    """
+    Structured response for the general chatbot node.
+    """
+    response: str = Field(..., description="The natural language response from the chatbot.")
+
 class LessonDistillationOutput(BaseNodeOutput):
     """
     Structured output for the Lesson Distiller (Self-Healing).

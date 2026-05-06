@@ -21,7 +21,12 @@ from src.workflow.schema import (
     GuardianOutput, 
     ClassifierOutput,
     LessonDistillationOutput, 
-    SchemaSelectorOutput
+    SchemaSelectorOutput,
+    AnchorSelection,
+    ClarificationOutput,
+    SQLGenerationOutput,
+    ExecuteSQLOutput,
+    ChatbotResponse
 )
 
 # Initialize single 8B model for ALL tasks
