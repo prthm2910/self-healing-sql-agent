@@ -329,10 +329,13 @@ def execute_sql_node(state: State, config: RunnableConfig):
     token = log_context.set({"user_id": user_id, "thread_id": thread_id})
     try:
         logger.info(f"Node: execute_sql | Query: {state['current_sql']}")
-        result = sql_engine.execute_query(state["current_sql"])
+        raw_result = sql_engine.execute_query(state["current_sql"])
+        
+        # Use Pydantic for internal normalization
+        result = ExecuteSQLOutput(**raw_result)
 
-        if result["status"] == "success":
-            data = result["data"]
+        if result.status == "success":
+            data = result.data
             # Detect 1x1 shape (Aggregate)
             is_aggregated = False
             if len(data) == 1:
@@ -340,11 +343,11 @@ def execute_sql_node(state: State, config: RunnableConfig):
                 if len(row.keys()) == 1:
                     is_aggregated = True
             
-            logger.info(f"Execution Success. Rows: {result['row_count']} | Aggregated: {is_aggregated}")
+            logger.info(f"Execution Success. Rows: {result.row_count} | Aggregated: {is_aggregated}")
             return {"sql_results": data, "is_aggregated": is_aggregated, "sql_error": None}
         else:
-            logger.warning(f"Execution Failed. Error: {result['error_message']}")
-            return {"sql_error": result["error_message"], "sql_results": [], "is_aggregated": False}
+            logger.warning(f"Execution Failed. Error: {result.error_message}")
+            return {"sql_error": result.error_message, "sql_results": [], "is_aggregated": False}
     finally:
         log_context.reset(token)
 
