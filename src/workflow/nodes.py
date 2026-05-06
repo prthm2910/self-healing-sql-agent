@@ -34,7 +34,7 @@ llm = get_llm()
 
 def call_chatbot(state: State, config: RunnableConfig, store=None):
     """
-    Standard chatbot node with 3-Tier Hierarchical Memory + Systemic Lessons.
+    Standard chatbot node with Systemic Lessons.
     """
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id", settings.default_user_id)
@@ -42,29 +42,30 @@ def call_chatbot(state: State, config: RunnableConfig, store=None):
     
     token = log_context.set({"user_id": user_id, "thread_id": thread_id})
     try:
-        logger.info(f"Node: call_chatbot | Hierarchical Memory for User: {user_id}")
+        logger.info(f"Node: call_chatbot | User: {user_id}")
         last_user_msg = state["messages"][-1].content if state["messages"] else ""
         
-        # --- LEVEL 1: IMMEDIATE CONTEXT (Short-Term) ---
-        # Tier 1 & 2: Recent messages + Sliding window of history
+        # Recent messages + Sliding window of history
         window_size = getattr(settings, "context_window_size", 20)
         current_chat_history = state["messages"][-window_size:]
         
-        # --- LEVEL 2: SYSTEMIC CONTEXT (Lessons from Mistakes) ---
+        # --- LEVEL 3: SYSTEMIC CONTEXT (Lessons from Mistakes) ---
         lessons_text, applied_titles = get_relevant_lessons(last_user_msg, store)
 
         # --- ASSEMBLE & INVOKE ---
         prompt_template = get_assistant_prompt()
-        chain = prompt_template | llm
+        chain = prompt_template | llm.with_structured_output(ChatbotResponse)
         
         logger.info(f"Chatbot Node | Lessons: {len(applied_titles)} {applied_titles if applied_titles else ''}")
         
-        response = chain.invoke({
+        res = chain.invoke({
             "lessons": lessons_text,
             "messages": current_chat_history
         })
 
-        return {"messages": [response]}
+        # Internal Validation -> Export to Dict
+        res.node_name = "call_chatbot"
+        return {"messages": [AIMessage(content=res.response)]}
     finally:
         log_context.reset(token)
 
