@@ -18,7 +18,7 @@ def get_assistant_prompt():
             "1. TIERED RETRIEVAL HIERARCHY:\n"
             "   - PRIORITY 1: Use the current conversation (sliding window messages) for immediate context.\n"
             "   - PRIORITY 2: Apply the 'SYSTEMIC LESSONS' above for robust SQL generation.\n"
-            "2. Use the retrieved lessons to personalize your responses and maintain continuity across conversations."
+            "2. Use the retrieved lessons to improve response quality and avoid repeating past mistakes."
         ),
         MessagesPlaceholder(variable_name="messages"),
     ])
