@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.store.base import BaseStore
 
 from src.core.config import settings
-from src.services.llm import get_chat_model
+from src.services.llm import get_llm
 from src.prompts.reflector import get_reflector_prompt
 from src.utils.logger import logger
 
@@ -39,7 +39,7 @@ def extract_and_store_facts(history: list, user_id: str, store: BaseStore):
     # 2. Initialize modern LCEL chain
     try:
         prompt_template = get_reflector_prompt()
-        llm = get_chat_model(is_flash=True).with_structured_output(Facts)
+        llm = get_llm().with_structured_output(Facts)
         chain = prompt_template | llm
         
         # 3. Format history for the prompt
