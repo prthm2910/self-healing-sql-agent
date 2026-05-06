@@ -385,10 +385,24 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
         # --- ROBUST Pydantic Learning Loop ---
         if store:
             try:
-                learning_prompt = f"""You are a Senior Staff Engineer. Create a Lesson from this SQL mistake.  
-Error: {state['sql_error']}
-Fix: {fixed_sql}
-Tables involved: {selected_tables or 'unknown'}
+                learning_prompt = f"""You are a Senior Staff Engineer mentoring junior agents.
+Create a "Golden standard Lesson" from this SQL mistake to ensure future models never repeat it.
+
+### CONTEXT:
+- FAILED QUERY: {state['current_sql']}
+- ERROR REPORTED: {state['sql_error']}
+- CORRECTED FIX: {fixed_sql}
+- TABLES INVOLVED: {selected_tables or 'unknown'}
+
+### STRICT OUTPUT TEMPLATE:
+Your `thought_process` MUST follow this exact structure and use Markdown formatting:
+1. **Root Cause Analysis:** Explain exactly WHY the error occurred (e.g., delimiter confusion, missing alias).
+2. **Example Comparison:**
+   - Original Error: `{state['current_sql']}`
+   - Fixed SQL: `{fixed_sql}`
+3. **Future Proofing:** Explain how following your instruction makes the system more robust.
+
+Your `instruction` MUST be a single, clear, actionable rule for future agents to follow.
 """
                 distiller = llm.with_structured_output(LessonDistillationOutput)
                 lesson = distiller.invoke([SystemMessage(content=learning_prompt)])
