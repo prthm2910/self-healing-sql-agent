@@ -205,10 +205,13 @@ NOTE: Sorting or limiting on a single table is STILL SIMPLE.
 def clarify_node(state: State, config: RunnableConfig):
     """Asks the user for clarification when the intent is ambiguous."""
     logger.info("Node: clarify_node")
-    # We can use an LLM to generate a helpful clarification question
+    
+    # Use structured output
+    chain = llm.with_structured_output(ClarificationOutput)
     prompt = f"The user asked: '{state['messages'][-1].content}'. This is too vague for a SQL query. Ask a concise follow-up question to clarify what they want to see from the DVD rental database."
-    response = llm.invoke(prompt)
-    return {"messages": [AIMessage(content=response.content)]}
+    res = chain.invoke(prompt)
+    
+    return {"messages": [AIMessage(content=res.clarification_question)]}
 
 def schema_selector_node(state: State, config: RunnableConfig, store=None):
     """Hybrid Discovery: Identifies Anchor tables, finds FK Bridges, and prunes columns."""
