@@ -300,18 +300,19 @@ def generate_sql_node(state: State, config: RunnableConfig, store=None):
 
         prompt_template = get_sql_generation_prompt()
         
-        logger.info(f"Using model: {llm.model_name}")
+        logger.info(f"Using model: {getattr(llm, 'model_name', 'default')}")
         
-        chain = prompt_template | llm
+        # Use structured output for robust SQL extraction
+        chain = prompt_template | llm.with_structured_output(SQLGenerationOutput)
         
-        response = chain.invoke({
+        res = chain.invoke({
             "schema": schema_str,
             "lessons": lessons_text,
             "history": state["messages"][:-1],
             "question": user_question
         })
         
-        sql_query = response.content.strip().replace("```sql", "").replace("```", "")
+        sql_query = res.sql.strip().replace("```sql", "").replace("```", "")
         return {"current_sql": sql_query, "retry_count": 0}
     finally:
         log_context.reset(token)
@@ -369,15 +370,16 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
             schema_str = str(schema_obj)
         
         prompt_template = get_sql_healing_prompt()
-        chain = prompt_template | llm
-        response = chain.invoke({
+        # Use structured output for robust SQL extraction
+        chain = prompt_template | llm.with_structured_output(SQLGenerationOutput)
+        res = chain.invoke({
             "schema": schema_str,
             "failed_query": state["current_sql"],
             "error_message": state["sql_error"],
             "question": user_question
         })
         
-        fixed_sql = response.content.strip().replace("```sql", "").replace("```", "")
+        fixed_sql = res.sql.strip().replace("```sql", "").replace("```", "")
         
         # --- ROBUST Pydantic Learning Loop ---
         if store:
