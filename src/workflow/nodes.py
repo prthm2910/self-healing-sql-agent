@@ -303,12 +303,7 @@ def generate_sql_node(state: State, config: RunnableConfig, store=None):
 
         prompt_template = get_sql_generation_prompt()
         
-        # Phase 4: Tiered Model Selection
-        # Use llm (Flash) for SIMPLE queries, llm (Pro) for COMPLEX
-        
-        # NOTE: model_name and model attributes vary across LangChain providers (e.g., OpenAI vs Anthropic vs Google).
-        # We use getattr to safely resolve the model string for logging and debugging regardless of the provider used.
-        logger.info(f"Using model: {llm}")
+        logger.info(f"Using model: {llm.model_name}")
         
         chain = prompt_template | llm
         
