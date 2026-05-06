@@ -1,10 +1,10 @@
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from src.workflow.state import State
-from src.services.llm import get_chat_model
+from src.services.llm import get_llm
 from src.utils.logger import logger
 from src.utils.limiter import rate_limiter
 
-guardian_model = get_chat_model(is_flash=True)
+guardian_model = get_llm()
 
 def guardian_node(state: State):
     """
