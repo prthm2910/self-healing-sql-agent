@@ -20,10 +20,10 @@ class LoggedChatOpenAI(ChatOpenAI):
             logger.error(f"LLM invocation failed: {e}", exc_info=True)
             raise
 
-def get_chat_model(is_flash=False):
+def get_llm():
     """Factory to get the requested logged LLM provider."""
-    model = settings.flash_model_name if is_flash else settings.model_name
-    logger.debug(f"Instantiating ChatOpenAI (model: {model})")
+    model = settings.model_name
+    logger.debug(f"Instantiating LLM (model: {model})")
     return LoggedChatOpenAI(
         model=model,
         api_key=settings.nvidia_api_key,

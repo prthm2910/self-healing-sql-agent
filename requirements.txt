@@ -6,3 +6,4 @@ langgraph-checkpoint-postgres
 psycopg[binary]
 python-dotenv
 pytest
+pydantic-settings
