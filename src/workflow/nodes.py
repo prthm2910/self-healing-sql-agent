@@ -45,29 +45,17 @@ def call_chatbot(state: State, config: RunnableConfig, store=None):
         window_size = getattr(settings, "context_window_size", 20)
         current_chat_history = state["messages"][-window_size:]
         
-        # --- LEVEL 2: KNOWLEDGE CONTEXT (Long-Term User Facts) ---
-        memories = []
-        if store is not None:
-            # Search based on recent context
-            memories = store.search((user_id, "memories"), query=last_user_msg, limit=5)
-            if not memories:
-                # Fallback to most recent facts if no semantic match
-                memories = store.search((user_id, "memories"), query=None, limit=5)
-        formatted_memories = "\n".join([f"- {m.value['fact']}" for m in memories]) if memories else "No user memories found."
-
-        # --- LEVEL 3: SYSTEMIC CONTEXT (Lessons from Mistakes) ---
+        # --- LEVEL 2: SYSTEMIC CONTEXT (Lessons from Mistakes) ---
         lessons_text, applied_titles = get_relevant_lessons(last_user_msg, store)
 
         # --- ASSEMBLE & INVOKE ---
         prompt_template = get_assistant_prompt()
         chain = prompt_template | llm
         
-        logger.info(f"Chatbot Node | Memory: {len(memories)} | Lessons: {len(applied_titles)} {applied_titles if applied_titles else ''}")
+        logger.info(f"Chatbot Node | Lessons: {len(applied_titles)} {applied_titles if applied_titles else ''}")
         
         response = chain.invoke({
-            "memories": formatted_memories,
             "lessons": lessons_text,
-            "tag": settings.memory_tag,
             "messages": current_chat_history
         })
 
