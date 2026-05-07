@@ -1,3 +1,5 @@
+import threading
+
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -433,7 +435,6 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
         
         # --- OFFLOAD TO BACKGROUND ---
         if store:
-            import threading
             state_data = {
                 "current_sql": state["current_sql"],
                 "sql_error": state["sql_error"],
