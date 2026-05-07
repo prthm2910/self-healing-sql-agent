@@ -151,10 +151,8 @@ User Message: "{last_msg}"
             }
         
         # If SQL intent is reached, reset the clarification lock
-        schema_obj = sql_engine.get_schema_object()
         return {
             "intent": "SQL", 
-            "db_schema": schema_obj, 
             "is_awaiting_clarification": False,
             "vague_query_context": "",
             "agent_logs": logs
@@ -267,18 +265,17 @@ def generate_sql_node(state: State, config: RunnableConfig, store=None):
         logger.info("Node: generate_sql")
         user_question = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
         
-        # Get schema from state
-        schema_obj = state.get("db_schema", {})
+        # Fetch schema from engine (cached)
+        full_schema = sql_engine.get_schema_object()
         selected_tables = state.get("selected_tables")
         
         if state.get("is_complex") and selected_tables:
-            logger.info(f"Pruning state schema for: {selected_tables}")
-            # Filter the schema object to only include selected tables
-            filtered_schema = {t: schema_obj.get(t, []) for t in selected_tables}
+            logger.info(f"Pruning schema for: {selected_tables}")
+            filtered_schema = {t: full_schema.get(t, []) for t in selected_tables}
             schema_str = str(filtered_schema)
         else:
-            logger.info("Using full state schema")
-            schema_str = str(schema_obj)
+            logger.info("Using full schema from cache")
+            schema_str = str(full_schema)
         
         # Tiered Lesson Retrieval (Global, Table-Specific, Semantic)
         lessons_text, applied_titles = get_relevant_lessons(
@@ -351,13 +348,13 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
         user_question = next(m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage))
         selected_tables = state.get("selected_tables")
         
-        # Get schema from state
-        schema_obj = state.get("db_schema", {})
+        # Fetch schema from engine (cached)
+        full_schema = sql_engine.get_schema_object()
         if selected_tables:
-            filtered_schema = {t: schema_obj.get(t, []) for t in selected_tables}
+            filtered_schema = {t: full_schema.get(t, []) for t in selected_tables}
             schema_str = str(filtered_schema)
         else:
-            schema_str = str(schema_obj)
+            schema_str = str(full_schema)
         
         prompt_template = get_sql_healing_prompt()
         chain = prompt_template | llm
