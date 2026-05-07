@@ -29,6 +29,18 @@ class SchemaSelectorOutput(BaseNodeOutput):
     selected_columns: Dict[str, List[str]] = Field(default_factory=dict, description="Mapping of table names to relevant columns.")
     fk_path_identified: str = Field("", description="Natural language description of the identified join path.")
 
+class SQLExample(BaseModel):
+    """Deep structure for code comparisons."""
+    original_error: str = Field(..., description="The exact SQL query that failed.")
+    fixed_sql: str = Field(..., description="The corrected, working SQL query.")
+
+class LessonBody(BaseModel):
+    """The core content of the Staff Engineer lesson."""
+    instruction: str = Field(..., description="The single, actionable rule for future agents.")
+    mistake: str = Field(..., description="A clear description of the specific error made.")
+    reasoning: str = Field(..., description="Markdown Root Cause Analysis and Future Proofing.")
+    example: SQLExample = Field(..., description="SQL Query Comparison example.")
+
 class LessonDistillationOutput(BaseNodeOutput):
     """
     Structured output for the Lesson Distiller (Self-Healing).
@@ -36,7 +48,8 @@ class LessonDistillationOutput(BaseNodeOutput):
     is_global: bool = Field(..., description="True if the lesson applies to all queries, False if table-specific.")
     tags: List[str] = Field(default_factory=list, description="Tags for the schema specific lessons.")
     title: str = Field(..., description="Short, descriptive title for the lesson.")
-    instruction: str = Field(..., description="The specific rule for future agents to follow.")
+    body: LessonBody = Field(..., description="The core content of the lesson.")
+    ending_note: str = Field(..., description="Professional sign-off (By following this instruction...)")
 
 class SQLResponse(BaseModel):
     """
