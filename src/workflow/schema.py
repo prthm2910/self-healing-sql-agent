@@ -6,7 +6,7 @@ class BaseNodeOutput(BaseModel):
     Base class for all node outputs to ensure deterministic observability.
     """
     node_name: str = Field(..., description="Name of the node that produced this output.")
-    thought_process: str = Field(..., description="The internal reasoning steps of the agent.")
+    thought_process: str = Field(..., description="A strictly concise 1-sentence summary of your reasoning for the current step.")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Execution metadata (latency, tokens, etc.)")
 
 class GuardianOutput(BaseNodeOutput):
