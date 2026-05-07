@@ -29,18 +29,20 @@ class SQLEngine:
         # Dynamic FK Mapping
         self._fk_map: Optional[Dict[str, Dict[str, str]]] = None
         self._graph: Optional[Dict[str, set]] = None
+        self._schema_cache: Optional[Dict[str, List[str]]] = None
 
-    @property
-    def fk_map(self) -> Dict[str, Dict[str, str]]:
-        if self._fk_map is None:
-            self._fk_map = self._build_dynamic_fk_map()
+        @property
+        def fk_map(self) -> Dict[str, Dict[str, str]]:
+
+            if self._fk_map is None:
+                self._fk_map = self._build_dynamic_fk_map()
         return self._fk_map
 
     @property
     def graph(self) -> Dict[str, set]:
         if self._graph is None:
             self._graph = {}
-            for table, fks in self.fk_map.items():
+            for table, fks in self._fk_map.items():
                 if table not in self._graph: self._graph[table] = set()
                 for col, f_table in fks.items():
                     self._graph[table].add(f_table)
@@ -177,6 +179,10 @@ class SQLEngine:
         """
         Returns the database schema as a structured dictionary: {table_name: [col1, col2, ...]}
         """
+        # Return cache if available and no specific tables requested
+        if not table_names and self._schema_cache:
+            return self._schema_cache
+
         pool = self._get_pool()
         query = "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'"
         if table_names:
@@ -193,6 +199,10 @@ class SQLEngine:
                     if table not in schema_obj:
                         schema_obj[table] = []
                     schema_obj[table].append(column)
+                
+                # Only update cache if it's the full schema
+                if not table_names:
+                    self._schema_cache = schema_obj
                 return schema_obj
         except Exception as e:
             logger.error(f"Error fetching schema object: {str(e)}")
