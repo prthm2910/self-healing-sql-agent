@@ -9,10 +9,10 @@ class State(TypedDict):
     is_complex: bool # Flag for the Manager to decide routing
     selected_tables: List[str] # Populated by Schema Selector
     agent_logs: List[Dict[str, Any]] # Observability trail for all nodes
-    
+
     # SQL Agent fields
-    db_schema: Optional[Dict[str, List[str]]]
     current_sql: str
+
     sql_error: str
     sql_results: list
     is_aggregated: bool # True if results are a single value (1x1)

@@ -1,3 +1,5 @@
+import threading
+
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -151,10 +153,8 @@ User Message: "{last_msg}"
             }
         
         # If SQL intent is reached, reset the clarification lock
-        schema_obj = sql_engine.get_schema_object()
         return {
             "intent": "SQL", 
-            "db_schema": schema_obj, 
             "is_awaiting_clarification": False,
             "vague_query_context": "",
             "agent_logs": logs
@@ -267,18 +267,17 @@ def generate_sql_node(state: State, config: RunnableConfig, store=None):
         logger.info("Node: generate_sql")
         user_question = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
         
-        # Get schema from state
-        schema_obj = state.get("db_schema", {})
+        # Fetch schema from engine (cached)
+        full_schema = sql_engine.get_schema_object()
         selected_tables = state.get("selected_tables")
         
         if state.get("is_complex") and selected_tables:
-            logger.info(f"Pruning state schema for: {selected_tables}")
-            # Filter the schema object to only include selected tables
-            filtered_schema = {t: schema_obj.get(t, []) for t in selected_tables}
+            logger.info(f"Pruning schema for: {selected_tables}")
+            filtered_schema = {t: full_schema.get(t, []) for t in selected_tables}
             schema_str = str(filtered_schema)
         else:
-            logger.info("Using full state schema")
-            schema_str = str(schema_obj)
+            logger.info("Using full schema from cache")
+            schema_str = str(full_schema)
         
         # Tiered Lesson Retrieval (Global, Table-Specific, Semantic)
         lessons_text, applied_titles = get_relevant_lessons(
@@ -338,8 +337,72 @@ def execute_sql_node(state: State, config: RunnableConfig):
     finally:
         log_context.reset(token)
 
+def _background_distill_lesson(state_data: dict, store, user_id: str):
+    """
+    Background worker to distill and record high-quality lessons using nested Pydantic structure.
+    """
+    try:
+        current_sql = state_data['current_sql']
+        sql_error = state_data['sql_error']
+        fixed_sql = state_data['fixed_sql']
+        selected_tables = state_data.get('selected_tables')
+
+        learning_prompt = f"""You are a Senior Staff Engineer mentoring junior agents.
+Create a "Golden standard Lesson" from this SQL mistake using the nested structure.
+
+### CONTEXT:
+- FAILED QUERY: {current_sql}
+- ERROR REPORTED: {sql_error}
+- CORRECTED FIX: {fixed_sql}
+- TABLES INVOLVED: {selected_tables or 'unknown'}
+
+### INSTRUCTIONS:
+1. `instruction`: A single, clear, actionable rule.
+2. `mistake`: Describe exactly what went wrong.
+3. `reasoning`: Provide a Markdown report including:
+   - **Root Cause Analysis**
+   - **Future Proofing**
+4. `example`: Populate with the original error and the fixed SQL.
+5. `ending_note`: MUST be "By following this instruction, future models can avoid this specific mistake and write more robust and error-free SQL queries."
+"""
+        distiller = llm.with_structured_output(LessonDistillationOutput)
+        lesson = distiller.invoke([SystemMessage(content=learning_prompt)])
+        
+        # Construct the "Neat and Beautiful" Markdown reasoning for the database
+        formatted_reasoning = f"""### Mistake
+{lesson.body.mistake}
+
+{lesson.body.reasoning}
+
+### Example Comparison
+- **Original Error:**
+```sql
+{lesson.body.example.original_error}
+```
+- **Fixed SQL:**
+```sql
+{lesson.body.example.fixed_sql}
+```
+
+---
+*{lesson.ending_note}*"""
+
+        record_lesson(
+            lesson.title, 
+            sql_error, 
+            lesson.body.instruction, 
+            formatted_reasoning, 
+            store, 
+            is_global=lesson.is_global,
+            tags=selected_tables
+        )
+        logger.info(f"[{user_id}] | SUCCESS | Background Task: Recorded lesson: {lesson.title}")
+        
+    except Exception as e:
+        logger.error(f"Background lesson distillation failed: {e}", exc_info=True)
+
 def heal_sql_node(state: State, config: RunnableConfig, store=None):
-    """Heals SQL using Pydantic for robust lesson distillation with tagging."""
+    """Heals SQL and offloads lesson distillation to a background task."""
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id", settings.default_user_id)
     token = log_context.set({"user_id": user_id, "thread_id": configurable.get("thread_id", "unknown")})       
@@ -351,13 +414,13 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
         user_question = next(m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage))
         selected_tables = state.get("selected_tables")
         
-        # Get schema from state
-        schema_obj = state.get("db_schema", {})
+        # Fetch schema from engine (cached)
+        full_schema = sql_engine.get_schema_object()
         if selected_tables:
-            filtered_schema = {t: schema_obj.get(t, []) for t in selected_tables}
+            filtered_schema = {t: full_schema.get(t, []) for t in selected_tables}
             schema_str = str(filtered_schema)
         else:
-            schema_str = str(schema_obj)
+            schema_str = str(full_schema)
         
         prompt_template = get_sql_healing_prompt()
         chain = prompt_template | llm
@@ -370,51 +433,23 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
         
         fixed_sql = response.content.strip().replace("```sql", "").replace("```", "")
         
-        # --- ROBUST Pydantic Learning Loop ---
+        # --- OFFLOAD TO BACKGROUND ---
         if store:
-            try:
-                learning_prompt = f"""You are a Senior Staff Engineer mentoring junior agents.
-Create a "Golden standard Lesson" from this SQL mistake to ensure future models never repeat it.
+            state_data = {
+                "current_sql": state["current_sql"],
+                "sql_error": state["sql_error"],
+                "fixed_sql": fixed_sql,
+                "selected_tables": selected_tables,
+                "user_question": user_question
+            }
+            threading.Thread(
+                target=_background_distill_lesson,
+                args=(state_data, store, user_id),
+                daemon=True
+            ).start()
+            logger.info("Lesson distillation offloaded to background thread.")
 
-### CONTEXT:
-- FAILED QUERY: {state['current_sql']}
-- ERROR REPORTED: {state['sql_error']}
-- CORRECTED FIX: {fixed_sql}
-- TABLES INVOLVED: {selected_tables or 'unknown'}
-
-### STRICT OUTPUT TEMPLATE:
-Your `thought_process` MUST follow this exact structure and use Markdown formatting:
-1. **Root Cause Analysis:** Explain exactly WHY the error occurred (e.g., delimiter confusion, missing alias).
-2. **Example Comparison:**
-   - Original Error: `{state['current_sql']}`
-   - Fixed SQL: `{fixed_sql}`
-3. **Future Proofing:** Explain how following your instruction makes the system more robust.
-
-Your `instruction` MUST be a single, clear, actionable rule for future agents to follow.
-"""
-                distiller = llm.with_structured_output(LessonDistillationOutput)
-                lesson = distiller.invoke([SystemMessage(content=learning_prompt)])
-                lesson.node_name = "lesson_distiller"
-                
-                # Record with tags for Tier 2 retrieval
-                record_lesson(
-                    lesson.title, 
-                    state['sql_error'], 
-                    lesson.instruction, 
-                    lesson.thought_process, 
-                    store, 
-                    is_global=lesson.is_global,
-                    tags=selected_tables
-                )
-                
-                logs = state.get("agent_logs", [])
-                logs.append(lesson.model_dump())
-                return {"current_sql": fixed_sql, "retry_count": retry, "agent_logs": logs}
-                
-            except Exception as e:
-                logger.error(f"Failed to distill lesson: {e}", exc_info=True)
-
-        return {"current_sql": fixed_sql, "retry_count": retry}
+        return {"current_sql": fixed_sql, "retry_count": retry, "sql_error": None}
     finally:
         log_context.reset(token)
 

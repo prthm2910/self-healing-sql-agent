@@ -19,7 +19,10 @@ STRICT RULES:
 2. Answer ONLY the specific question asked. Do not include extra columns or data not requested.
 3. Use standard PostgreSQL syntax.
 4. Always limit results to a maximum of 50 unless requested otherwise.
-5. If the question cannot be answered with the provided schema, say "I cannot find the relevant tables for this request."
+5. NO HALLUCINATIONS: Do not assume columns exist (e.g., 'name', 'country', 'total_amount') unless you see them in the SCHEMA.
+6. STRUCTURAL INTEGRITY: If you need to filter by 'country', you MUST join via 'address' -> 'city' -> 'country'.
+7. STRING MATCHING: Always use case-insensitive matching (ILIKE) for user-provided names or locations unless specified otherwise.
+8. If the question cannot be answered with the provided schema, say "I cannot find the relevant tables for this request."
 """),
         MessagesPlaceholder(variable_name="history"),
         ("human", "{question}")

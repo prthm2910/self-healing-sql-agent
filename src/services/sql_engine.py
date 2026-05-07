@@ -29,6 +29,7 @@ class SQLEngine:
         # Dynamic FK Mapping
         self._fk_map: Optional[Dict[str, Dict[str, str]]] = None
         self._graph: Optional[Dict[str, set]] = None
+        self._schema_cache: Optional[Dict[str, List[str]]] = None
 
     @property
     def fk_map(self) -> Dict[str, Dict[str, str]]:
@@ -177,6 +178,10 @@ class SQLEngine:
         """
         Returns the database schema as a structured dictionary: {table_name: [col1, col2, ...]}
         """
+        # Return cache if available and no specific tables requested
+        if not table_names and self._schema_cache:
+            return self._schema_cache
+
         pool = self._get_pool()
         query = "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'"
         if table_names:
@@ -193,6 +198,10 @@ class SQLEngine:
                     if table not in schema_obj:
                         schema_obj[table] = []
                     schema_obj[table].append(column)
+                
+                # Only update cache if it's the full schema
+                if not table_names:
+                    self._schema_cache = schema_obj
                 return schema_obj
         except Exception as e:
             logger.error(f"Error fetching schema object: {str(e)}")
