@@ -1,4 +1,8 @@
+import time
+
 from langchain_openai import ChatOpenAI
+
+from src.utils.limiter import rate_limiter
 from src.core.config import settings
 from src.utils.logger import logger
 
@@ -6,8 +10,6 @@ class LoggedChatOpenAI(ChatOpenAI):
     """Wrapped ChatOpenAI provider with logging."""
     
     def invoke(self, input, config=None, **kwargs):
-        from src.utils.limiter import rate_limiter
-        import time
         
         # Ensure total API consumption stays within budget with a short retry loop
         max_retries = 3
