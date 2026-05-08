@@ -23,7 +23,12 @@ from src.workflow.schema import (
     GuardianOutput, 
     ClassifierOutput,
     LessonDistillationOutput, 
-    SchemaSelectorOutput
+    SchemaSelectorOutput,
+    AnchorSelection,
+    ClarificationOutput,
+    SQLGenerationOutput,
+    ExecuteSQLOutput,
+    ChatbotResponse
 )
 
 # Initialize single 8B model for ALL tasks
@@ -31,7 +36,7 @@ llm = get_llm()
 
 def call_chatbot(state: State, config: RunnableConfig, store=None):
     """
-    Standard chatbot node with 3-Tier Hierarchical Memory + Systemic Lessons.
+    Standard chatbot node with Systemic Lessons.
     """
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id", settings.default_user_id)
@@ -39,29 +44,30 @@ def call_chatbot(state: State, config: RunnableConfig, store=None):
     
     token = log_context.set({"user_id": user_id, "thread_id": thread_id})
     try:
-        logger.info(f"Node: call_chatbot | Hierarchical Memory for User: {user_id}")
+        logger.info(f"Node: call_chatbot | User: {user_id}")
         last_user_msg = state["messages"][-1].content if state["messages"] else ""
         
-        # --- LEVEL 1: IMMEDIATE CONTEXT (Short-Term) ---
-        # Tier 1 & 2: Recent messages + Sliding window of history
+        # Recent messages + Sliding window of history
         window_size = getattr(settings, "context_window_size", 20)
         current_chat_history = state["messages"][-window_size:]
         
-        # --- LEVEL 2: SYSTEMIC CONTEXT (Lessons from Mistakes) ---
+        # --- LEVEL 3: SYSTEMIC CONTEXT (Lessons from Mistakes) ---
         lessons_text, applied_titles = get_relevant_lessons(last_user_msg, store)
 
         # --- ASSEMBLE & INVOKE ---
         prompt_template = get_assistant_prompt()
-        chain = prompt_template | llm
+        chain = prompt_template | llm.with_structured_output(ChatbotResponse)
         
         logger.info(f"Chatbot Node | Lessons: {len(applied_titles)} {applied_titles if applied_titles else ''}")
         
-        response = chain.invoke({
+        res = chain.invoke({
             "lessons": lessons_text,
             "messages": current_chat_history
         })
 
-        return {"messages": [response]}
+        # Internal Validation -> Export to Dict
+        res.node_name = "call_chatbot"
+        return {"messages": [AIMessage(content=res.response)]}
     finally:
         log_context.reset(token)
 
@@ -199,10 +205,13 @@ NOTE: Sorting or limiting on a single table is STILL SIMPLE.
 def clarify_node(state: State, config: RunnableConfig):
     """Asks the user for clarification when the intent is ambiguous."""
     logger.info("Node: clarify_node")
-    # We can use an LLM to generate a helpful clarification question
+    
+    # Use structured output
+    chain = llm.with_structured_output(ClarificationOutput)
     prompt = f"The user asked: '{state['messages'][-1].content}'. This is too vague for a SQL query. Ask a concise follow-up question to clarify what they want to see from the DVD rental database."
-    response = llm.invoke(prompt)
-    return {"messages": [AIMessage(content=response.content)]}
+    res = chain.invoke(prompt)
+    
+    return {"messages": [AIMessage(content=res.clarification_question)]}
 
 def schema_selector_node(state: State, config: RunnableConfig, store=None):
     """Hybrid Discovery: Identifies Anchor tables, finds FK Bridges, and prunes columns."""
@@ -215,17 +224,17 @@ def schema_selector_node(state: State, config: RunnableConfig, store=None):
         last_msg = state["messages"][-1].content
         all_tables = sql_engine.list_tables()
         
-        # 1. Anchor Identification (Flash)
+        # 1. Anchor Identification
         anchor_prompt = f"""Given the user question and the list of tables, select the 2-3 most relevant 'Anchor' tables.
 Question: "{last_msg}"
 Tables: {all_tables}
-
-Return a comma-separated list of table names.
 """
-        anchors_raw = llm.invoke([SystemMessage(content=anchor_prompt)]).content.strip()
-        anchors = [a.strip() for a in anchors_raw.split(",") if a.strip() in all_tables]
+        # Use structured output to avoid brittle split(",")
+        anchor_chain = llm.with_structured_output(AnchorSelection)
+        anchor_res = anchor_chain.invoke([SystemMessage(content=anchor_prompt)])
+        anchors = [a for a in anchor_res.anchors if a in all_tables]
         
-        logger.info(f"Anchors Identified: {anchors}")
+        logger.info(f"Anchors Identified: {anchors} | Thought: {getattr(anchor_res, 'thought_process', 'N/A')}")
         
         # 2. Deterministic FK Bridge Traversal (Python)
         bridges = sql_engine.get_bridge_tables(anchors)
@@ -233,7 +242,7 @@ Return a comma-separated list of table names.
         
         logger.info(f"Bridges Found: {bridges} | Total Tables: {selected_tables}")
         
-        # 3. Column Pruning (Flash)
+        # 3. Column Pruning
         # Fetch partial schema for the selected tables
         partial_schema = sql_engine.get_schema(selected_tables)
         
@@ -290,18 +299,19 @@ def generate_sql_node(state: State, config: RunnableConfig, store=None):
 
         prompt_template = get_sql_generation_prompt()
         
-        logger.info(f"Using model: {llm.model_name}")
+        logger.info(f"Using model: {getattr(llm, 'model_name', 'default')}")
         
-        chain = prompt_template | llm
+        # Use structured output for robust SQL extraction
+        chain = prompt_template | llm.with_structured_output(SQLGenerationOutput)
         
-        response = chain.invoke({
+        res = chain.invoke({
             "schema": schema_str,
             "lessons": lessons_text,
             "history": state["messages"][:-1],
             "question": user_question
         })
         
-        sql_query = response.content.strip().replace("```sql", "").replace("```", "")
+        sql_query = res.sql.strip().replace("```sql", "").replace("```", "")
         return {"current_sql": sql_query, "retry_count": 0}
     finally:
         log_context.reset(token)
@@ -318,10 +328,13 @@ def execute_sql_node(state: State, config: RunnableConfig):
     token = log_context.set({"user_id": user_id, "thread_id": thread_id})
     try:
         logger.info(f"Node: execute_sql | Query: {state['current_sql']}")
-        result = sql_engine.execute_query(state["current_sql"])
+        raw_result = sql_engine.execute_query(state["current_sql"])
+        
+        # Use Pydantic for internal normalization
+        result = ExecuteSQLOutput(**raw_result)
 
-        if result["status"] == "success":
-            data = result["data"]
+        if result.status == "success":
+            data = result.data
             # Detect 1x1 shape (Aggregate)
             is_aggregated = False
             if len(data) == 1:
@@ -329,11 +342,11 @@ def execute_sql_node(state: State, config: RunnableConfig):
                 if len(row.keys()) == 1:
                     is_aggregated = True
             
-            logger.info(f"Execution Success. Rows: {result['row_count']} | Aggregated: {is_aggregated}")
+            logger.info(f"Execution Success. Rows: {result.row_count} | Aggregated: {is_aggregated}")
             return {"sql_results": data, "is_aggregated": is_aggregated, "sql_error": None}
         else:
-            logger.warning(f"Execution Failed. Error: {result['error_message']}")
-            return {"sql_error": result["error_message"], "sql_results": [], "is_aggregated": False}
+            logger.warning(f"Execution Failed. Error: {result.error_message}")
+            return {"sql_error": result.error_message, "sql_results": [], "is_aggregated": False}
     finally:
         log_context.reset(token)
 
@@ -423,15 +436,16 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
             schema_str = str(full_schema)
         
         prompt_template = get_sql_healing_prompt()
-        chain = prompt_template | llm
-        response = chain.invoke({
+        # Use structured output for robust SQL extraction
+        chain = prompt_template | llm.with_structured_output(SQLGenerationOutput)
+        res = chain.invoke({
             "schema": schema_str,
             "failed_query": state["current_sql"],
             "error_message": state["sql_error"],
             "question": user_question
         })
         
-        fixed_sql = response.content.strip().replace("```sql", "").replace("```", "")
+        fixed_sql = res.sql.strip().replace("```sql", "").replace("```", "")
         
         # --- OFFLOAD TO BACKGROUND ---
         if store:
