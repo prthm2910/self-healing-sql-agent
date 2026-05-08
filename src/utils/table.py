@@ -21,7 +21,7 @@ def generate_markdown_table(data: List[Dict[str, Any]]) -> str:
     # Create data rows
     body_rows = []
     for row in data:
-        row_values = [str(row.get(h, "")) for h in headers]
+        row_values = [str(row.get(h, "")).replace("|", "\\|") for h in headers]
         body_rows.append("| " + " | ".join(row_values) + " |")
     
     return "\n".join([header_row, separator_row] + body_rows)

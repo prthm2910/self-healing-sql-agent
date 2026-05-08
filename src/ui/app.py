@@ -1,14 +1,16 @@
-import threading
 import uuid
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
 
 from src.core.config import settings
-from src.services.reflector import extract_and_store_facts
 from src.ui.components import render_sidebar, save_thread_metadata
 from src.utils.limiter import rate_limiter
 from src.workflow.builder import build_chatbot_graph
 from src.utils.logger import logger, log_context
+from langsmith import Client
+
+# Initialize LangSmith client for tracing
+ls_client = Client()
 
 # Page Config
 st.set_page_config(page_title="Personalized AI Assistant", page_icon="🧠", layout="wide")
@@ -57,17 +59,6 @@ config = {
         "user_id": st.session_state.user_id
     }
 }
-
-def run_reflection(history, user_id, thread_id):
-    """Background task to extract and store facts."""
-    token = log_context.set({"user_id": user_id, "thread_id": thread_id})
-    try:
-        logger.info(f"Starting background reflection for User: {user_id}")
-        extract_and_store_facts(history, user_id, CHATBOT_GRAPH.store)
-    except Exception as e:
-        logger.error(f"Background reflection failed: {e}", exc_info=True)
-    finally:
-        log_context.reset(token)
 
 # --- Display Messages ---
 chat_container = st.container()
@@ -156,16 +147,6 @@ if st.session_state.pending_prompt:
                 display_content = content.replace(settings.memory_tag, "").strip()
                 st.markdown(display_content)
                 logger.info("Response received and displayed.")
-                
-                # 6. Trigger Background Reflection if tagged
-                if settings.memory_tag in content:
-                    logger.info("Memory tag detected. Spawning background reflection thread.")
-                    full_history = response["messages"]
-                    thread = threading.Thread(
-                        target=run_reflection,
-                        args=(full_history, st.session_state.user_id, st.session_state.current_thread_id)
-                    )
-                    thread.start()
             
             except Exception as e:
                 logger.error(f"AI Invocation Error: {e}", exc_info=True)

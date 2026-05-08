@@ -72,7 +72,7 @@ def verify_all_tiers():
     # 4. EXECUTE NODE & VERIFY ASSEMBLY
     print("\n--- Executing call_chatbot node ---")
     # We invoke the node. We'll check logs or inspect the prompt if possible.
-    # Since the node calls chat_model.invoke, we'll see the final payload in logs if we set level to DEBUG.
+    # Since the node calls llm.invoke, we'll see the final payload in logs if we set level to DEBUG.
     
     # Actually, let's just inspect the retrieval results manually first to ensure the code finds them.
     from src.services.lessons import get_relevant_lessons

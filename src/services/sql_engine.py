@@ -1,11 +1,13 @@
 import os
-from typing import List, Dict, Any, Optional
-
 import atexit
+from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse, urlunparse
+
 import psycopg
 from psycopg_pool import ConnectionPool
 from psycopg.rows import dict_row
 from dotenv import load_dotenv
+from langsmith import traceable
 
 from src.utils.logger import logger
 
@@ -21,7 +23,102 @@ class SQLEngine:
             raise ValueError("DATABASE_URL not found in environment")
         
         # Create a dedicated pool for the specific database (e.g. pagila)
-        self.connection_url = base_url.rsplit("/", 1)[0] + f"/{db_name}"
+        parsed = urlparse(base_url)
+        self.connection_url = urlunparse(parsed._replace(path=f"/{db_name}"))
+        
+        # Dynamic FK Mapping
+        self._fk_map: Optional[Dict[str, Dict[str, str]]] = None
+        self._graph: Optional[Dict[str, set]] = None
+        self._schema_cache: Optional[Dict[str, List[str]]] = None
+
+    @property
+    def fk_map(self) -> Dict[str, Dict[str, str]]:
+        if self._fk_map is None:
+            self._fk_map = self._build_dynamic_fk_map()
+        return self._fk_map
+
+    @property
+    def graph(self) -> Dict[str, set]:
+        if self._graph is None:
+            self._graph = {}
+            for table, fks in self.fk_map.items():
+                if table not in self._graph: self._graph[table] = set()
+                for col, f_table in fks.items():
+                    self._graph[table].add(f_table)
+                    if f_table not in self._graph: self._graph[f_table] = set()
+                    self._graph[f_table].add(table)
+        return self._graph
+
+    @traceable(name="Build Dynamic FK Map", run_type="tool")
+    def _build_dynamic_fk_map(self) -> Dict[str, Dict[str, str]]:
+        """Fetches foreign key relationships dynamically from PostgreSQL."""
+        logger.info("Building dynamic FK map from information_schema")
+        query = """
+        SELECT
+            tc.table_name, 
+            kcu.column_name, 
+            ccu.table_name AS foreign_table_name
+        FROM 
+            information_schema.table_constraints AS tc 
+            JOIN information_schema.key_column_usage AS kcu
+              ON tc.constraint_name = kcu.constraint_name
+              AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage AS ccu
+              ON ccu.constraint_name = tc.constraint_name
+              AND ccu.table_schema = tc.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema = 'public';
+        """
+        fk_map = {}
+        try:
+            pool = self._get_pool()
+            with pool.connection() as conn:
+                results = conn.execute(query).fetchall()
+                for row in results:
+                    table = row["table_name"]
+                    column = row["column_name"]
+                    foreign_table = row["foreign_table_name"]
+                    if table not in fk_map:
+                        fk_map[table] = {}
+                    fk_map[table][column] = foreign_table
+                return fk_map
+        except Exception as e:
+            logger.error(f"Failed to build dynamic FK map: {str(e)}")
+            return {}
+
+    @traceable(name="Identify FK Bridge Tables", run_type="tool")
+    def get_bridge_tables(self, anchors: List[str]) -> List[str]:
+        """
+        Finds bridge tables needed to connect anchor tables using BFS.
+        """
+        if len(anchors) < 2:
+            return []
+            
+        bridges = set()
+        start_node = anchors[0]
+        for target in anchors[1:]:
+            path = self._find_shortest_path(start_node, target)
+            if path:
+                bridges.update(path)
+        
+        return list(bridges - set(anchors))
+
+    @traceable(name="BFS Pathfinding", run_type="tool")
+    def _find_shortest_path(self, start, end):
+        """BFS implementation for shortest path."""
+        if start == end: return [start]
+        queue = [(start, [start])]
+        visited = {start}
+        
+        while queue:
+            (node, path) = queue.pop(0)
+            for next_node in self.graph.get(node, []):
+                if next_node == end:
+                    return path + [next_node]
+                if next_node not in visited:
+                    visited.add(next_node)
+                    queue.append((next_node, path + [next_node]))
+        return None
         
     def _get_pool(self):
         """Lazy initialization of the SQL connection pool."""
@@ -37,6 +134,7 @@ class SQLEngine:
             logger.debug(f"SQLEngine pool initialized for: {self.db_name}")
         return self._pool
 
+    @traceable(name="Execute SQL Query", run_type="tool")
     def execute_query(self, query: str) -> Dict[str, Any]:
         """Executes a SQL query using the lazy-loaded pool."""
         logger.info(f"Executing SQL Query: {query}")
@@ -74,6 +172,40 @@ class SQLEngine:
                 return "\n".join(schema_parts)
         except Exception as e:
             return f"Error retrieving schema: {str(e)}"
+
+    @traceable(name="Get Schema Object", run_type="tool")
+    def get_schema_object(self, table_names: Optional[List[str]] = None) -> Dict[str, List[str]]:
+        """
+        Returns the database schema as a structured dictionary: {table_name: [col1, col2, ...]}
+        """
+        # Return cache if available and no specific tables requested
+        if not table_names and self._schema_cache:
+            return self._schema_cache
+
+        pool = self._get_pool()
+        query = "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'"
+        if table_names:
+            tables_str = ",".join([f"'{t}'" for t in table_names])
+            query += f" AND table_name IN ({tables_str})"
+        
+        schema_obj = {}
+        try:
+            with pool.connection() as conn:
+                results = conn.execute(query).fetchall()
+                for row in results:
+                    table = row["table_name"]
+                    column = row["column_name"]
+                    if table not in schema_obj:
+                        schema_obj[table] = []
+                    schema_obj[table].append(column)
+                
+                # Only update cache if it's the full schema
+                if not table_names:
+                    self._schema_cache = schema_obj
+                return schema_obj
+        except Exception as e:
+            logger.error(f"Error fetching schema object: {str(e)}")
+            return {}
 
     def list_tables(self) -> List[str]:
         pool = self._get_pool()

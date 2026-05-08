@@ -25,8 +25,8 @@ def test_atomic_fact_retention():
         Fact(fact="User likes water", category="preferences", certainty=1.0)
     ])
     
-    with patch("src.services.reflector.get_chat_model") as mock_get_model:
-        # Create a mock that will be the result of get_chat_model().with_structured_output()
+    with patch("src.services.reflector.get_llm") as mock_get_model:
+        # Create a mock that will be the result of get_llm().with_structured_output()
         mock_chain = MagicMock()
         mock_chain.invoke.return_value = mock_facts
 

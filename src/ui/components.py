@@ -5,7 +5,7 @@ from src.services.database import delete_thread_data
 from src.core.config import settings
 
 # Systemic Lessons Management
-from src.services.lessons import list_all_lessons, delete_lesson
+from src.services.lessons import list_all_lessons
 
 def render_sidebar(chatbot_graph):
     """Renders the conversation and memory management sidebar."""
@@ -38,26 +38,9 @@ def render_sidebar(chatbot_graph):
                         st.rerun()
         
         st.divider()
-        
-        # --- Memory Management ---
-        st.header("🧠 Long-Term Memory")
-        memories = _get_all_memories(st.session_state.user_id, chatbot_graph)
-        if memories:
-            for mem in memories:
-                with st.expander(f"{mem['category'].title()}: {mem['fact'][:20]}..."):
-                    st.write(mem['fact'])
-                    st.caption(f"Certainty: {mem.get('certainty', 'N/A')}")
-                    if st.button("Forget this fact", key=f"mem_{mem['id']}", use_container_width=True):
-                        chatbot_graph.store.delete((st.session_state.user_id, "memories"), mem['id'])
-                        st.toast("Fact forgotten.")
-                        st.rerun()
-        else:
-            st.info("No long-term memories found yet.")
 
-        st.divider()
-
-        # --- Systemic Lessons Management ---
-        st.header("📖 Systemic Lessons")
+        # --- Lessons Management ---
+        st.header("📖 Lessons")
         lessons = list_all_lessons(chatbot_graph.store)
         if lessons:
             for lsn in lessons:
@@ -66,12 +49,8 @@ def render_sidebar(chatbot_graph):
                     st.markdown(f"**Instruction:** {lsn['instruction']}")
                     st.markdown(f"**Mistake:** {lsn['mistake']}")
                     st.caption(f"Reasoning: {lsn['reasoning']}")
-                    if st.button("Remove Lesson", key=f"lsn_{lsn['id']}", use_container_width=True):
-                        delete_lesson(chatbot_graph.store, lsn["id"], lsn["type"])
-                        st.toast("Lesson removed.")
-                        st.rerun()
         else:
-            st.info("No systemic lessons recorded yet.")
+            st.info("No lessons recorded yet.")
 
         st.divider()
         st.caption(f"User: {st.session_state.user_id}")
@@ -86,14 +65,6 @@ def _get_all_threads(user_id, chatbot_graph):
             key=lambda x: x["updated"] or "",
             reverse=True
         )
-    except Exception:
-        return []
-
-def _get_all_memories(user_id, chatbot_graph):
-    """Fetches all persistent facts for this user."""
-    try:
-        mems = chatbot_graph.store.search((user_id, "memories"), limit=100)
-        return [{"id": m.key, "fact": m.value.get("fact"), "category": m.value.get("category"), "certainty": m.value.get("certainty")} for m in mems]
     except Exception:
         return []
 
