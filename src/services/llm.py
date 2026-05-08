@@ -6,6 +6,22 @@ class LoggedChatOpenAI(ChatOpenAI):
     """Wrapped ChatOpenAI provider with logging."""
     
     def invoke(self, input, config=None, **kwargs):
+        from src.utils.limiter import rate_limiter
+        import time
+        
+        # Ensure total API consumption stays within budget with a short retry loop
+        max_retries = 3
+        for attempt in range(max_retries):
+            if rate_limiter.check_and_record():
+                break
+            
+            if attempt < max_retries - 1:
+                logger.warning(f"Rate limit reached. Retrying in 2s (Attempt {attempt+1}/{max_retries})...")
+                time.sleep(2)
+            else:
+                logger.error("Global Rate Limit Reached after retries!")
+                raise RuntimeError("API Rate Limit Exceeded. Please try again in a minute.")
+
         logger.info(f"Invoking LLM ({self.model_name or self.model})...")
         try:
             response = super().invoke(input, config, **kwargs)
