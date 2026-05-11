@@ -43,21 +43,23 @@ class SQLEngine:
             self._graph = {}
             for table, fks in self.fk_map.items():
                 if table not in self._graph: self._graph[table] = set()
-                for col, f_table in fks.items():
+                for col, target_info in fks.items():
+                    f_table = target_info["table"]
                     self._graph[table].add(f_table)
                     if f_table not in self._graph: self._graph[f_table] = set()
                     self._graph[f_table].add(table)
         return self._graph
 
     @traceable(name="Build Dynamic FK Map", run_type="tool")
-    def _build_dynamic_fk_map(self) -> Dict[str, Dict[str, str]]:
+    def _build_dynamic_fk_map(self) -> Dict[str, Dict[str, Dict[str, str]]]:
         """Fetches foreign key relationships dynamically from PostgreSQL."""
         logger.info("Building dynamic FK map from information_schema")
         query = """
         SELECT
             tc.table_name, 
             kcu.column_name, 
-            ccu.table_name AS foreign_table_name
+            ccu.table_name AS foreign_table_name,
+            ccu.column_name AS foreign_column_name
         FROM 
             information_schema.table_constraints AS tc 
             JOIN information_schema.key_column_usage AS kcu
@@ -78,9 +80,13 @@ class SQLEngine:
                     table = row["table_name"]
                     column = row["column_name"]
                     foreign_table = row["foreign_table_name"]
+                    foreign_column = row["foreign_column_name"]
                     if table not in fk_map:
                         fk_map[table] = {}
-                    fk_map[table][column] = foreign_table
+                    fk_map[table][column] = {
+                        "table": foreign_table,
+                        "column": foreign_column
+                    }
                 return fk_map
         except Exception as e:
             logger.error(f"Failed to build dynamic FK map: {str(e)}")
@@ -112,6 +118,14 @@ class SQLEngine:
         
         while queue:
             (node, path) = queue.pop(0)
+            # Use .get(node, {}).values() but we need to extract the table name
+            neighbors = set()
+            if node in self.fk_map:
+                for target_info in self.fk_map[node].values():
+                    neighbors.add(target_info["table"])
+            
+            # BFS also needs the inverse relationships (who points to me?)
+            # This is handled by self.graph which I should also update
             for next_node in self.graph.get(node, []):
                 if next_node == end:
                     return path + [next_node]
