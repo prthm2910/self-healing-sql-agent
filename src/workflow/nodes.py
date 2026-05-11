@@ -331,32 +331,32 @@ def generate_sql_node(state: State, config: RunnableConfig, store=None):
         logger.info("Node: generate_sql")
         user_question = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
         
-        # Fetch schema from engine (cached)
-        full_schema = sql_engine.get_schema_object()
+        # Priority 1: Use surgical pruned columns from state
+        # Priority 2: Use selected tables from state
+        # Priority 3: Fallback to full schema (Simple queries)
+        
+        selected_columns = state.get("selected_columns")
         selected_tables = state.get("selected_tables")
         
-        if state.get("is_complex") and selected_tables:
-            logger.info(f"Pruning schema for: {selected_tables}")
-            filtered_schema = {t: full_schema.get(t, []) for t in selected_tables}
-            schema_str = str(filtered_schema)
+        if selected_columns:
+            logger.info(f"Using SURGICALLY PRUNED schema ({len(selected_columns)} tables)")
+            schema_str = str(selected_columns)
+        elif selected_tables:
+            logger.info(f"Using table-filtered schema ({len(selected_tables)} tables)")
+            full_schema = sql_engine.get_schema_object()
+            schema_str = str({t: full_schema.get(t, []) for t in selected_tables})
         else:
-            logger.info("Using full schema from cache")
-            schema_str = str(full_schema)
+            logger.info("Using full schema fallback")
+            schema_str = str(sql_engine.get_schema_object())
         
-        # Tiered Lesson Retrieval (Global, Table-Specific, Semantic)
+        # Tiered Lesson Retrieval
         lessons_text, applied_titles = get_relevant_lessons(
             user_question, 
             store, 
             selected_tables=selected_tables
         )
         
-        logger.info(f"SQL Gen | Lessons Applied: {applied_titles}")
-
         prompt_template = get_sql_generation_prompt()
-        
-        logger.info(f"Using model: {getattr(llm, 'model_name', 'default')}")
-        
-        # Use structured output for robust SQL extraction
         chain = prompt_template | llm.with_structured_output(SQLGenerationOutput)
         
         res = chain.invoke({
