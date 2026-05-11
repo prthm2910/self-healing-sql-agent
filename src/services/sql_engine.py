@@ -43,21 +43,23 @@ class SQLEngine:
             self._graph = {}
             for table, fks in self.fk_map.items():
                 if table not in self._graph: self._graph[table] = set()
-                for col, f_table in fks.items():
+                for col, target_info in fks.items():
+                    f_table = target_info["table"]
                     self._graph[table].add(f_table)
                     if f_table not in self._graph: self._graph[f_table] = set()
                     self._graph[f_table].add(table)
         return self._graph
 
     @traceable(name="Build Dynamic FK Map", run_type="tool")
-    def _build_dynamic_fk_map(self) -> Dict[str, Dict[str, str]]:
+    def _build_dynamic_fk_map(self) -> Dict[str, Dict[str, Dict[str, str]]]:
         """Fetches foreign key relationships dynamically from PostgreSQL."""
         logger.info("Building dynamic FK map from information_schema")
         query = """
         SELECT
             tc.table_name, 
             kcu.column_name, 
-            ccu.table_name AS foreign_table_name
+            ccu.table_name AS foreign_table_name,
+            ccu.column_name AS foreign_column_name
         FROM 
             information_schema.table_constraints AS tc 
             JOIN information_schema.key_column_usage AS kcu
@@ -78,9 +80,13 @@ class SQLEngine:
                     table = row["table_name"]
                     column = row["column_name"]
                     foreign_table = row["foreign_table_name"]
+                    foreign_column = row["foreign_column_name"]
                     if table not in fk_map:
                         fk_map[table] = {}
-                    fk_map[table][column] = foreign_table
+                    fk_map[table][column] = {
+                        "table": foreign_table,
+                        "column": foreign_column
+                    }
                 return fk_map
         except Exception as e:
             logger.error(f"Failed to build dynamic FK map: {str(e)}")
@@ -119,6 +125,28 @@ class SQLEngine:
                     visited.add(next_node)
                     queue.append((next_node, path + [next_node]))
         return None
+
+    @traceable(name="Get Relevant FKs", run_type="tool")
+    def get_relevant_fks(self, table_names: List[str]) -> List[Dict[str, str]]:
+        """
+        Fetches foreign key relationships between the specified tables.
+        
+        Returns:
+            List[Dict]: List of FK definitions: {'source': table, 'col': col, 'target_table': table, 'target_col': col}
+        """
+        all_fks = self.fk_map
+        relevant_fks = []
+        for table in table_names:
+            if table in all_fks:
+                for col, target_info in all_fks[table].items():
+                    if target_info["table"] in table_names:
+                        relevant_fks.append({
+                            "source_table": table,
+                            "source_column": col,
+                            "target_table": target_info["table"],
+                            "target_column": target_info["column"]
+                        })
+        return relevant_fks
         
     def _get_pool(self):
         """Lazy initialization of the SQL connection pool."""
@@ -148,13 +176,44 @@ class SQLEngine:
             logger.error(f"SQL Execution Failed. Error: {str(e)}")
             return {"status": "error", "error_message": str(e), "query": query}
 
+    def _get_enum_map(self) -> Dict[str, List[str]]:
+        """Fetches all ENUM types and their allowed values."""
+        query = """
+        SELECT
+            t.typname AS enum_name,
+            e.enumlabel AS enum_value
+        FROM pg_type t
+        JOIN pg_enum e ON t.oid = e.enumtypid
+        JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+        WHERE n.nspname = 'public'
+        ORDER BY t.typname, e.enumsortorder;
+        """
+        enum_map = {}
+        try:
+            pool = self._get_pool()
+            with pool.connection() as conn:
+                results = conn.execute(query).fetchall()
+                for row in results:
+                    name = row["enum_name"]
+                    val = row["enum_value"]
+                    if name not in enum_map:
+                        enum_map[name] = []
+                    enum_map[name].append(val)
+                return enum_map
+        except Exception as e:
+            logger.error(f"Failed to fetch ENUM map: {str(e)}")
+            return {}
+
     def get_schema(self, table_names: Optional[List[str]] = None) -> str:
-        """Returns schema using the lazy-loaded pool."""
+        """Returns schema with ENUM values resolved and complex type hints."""
         pool = self._get_pool()
-        query = "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'public'"
+        enum_map = self._get_enum_map()
+        
+        query = "SELECT table_name, column_name, data_type, udt_name FROM information_schema.columns WHERE table_schema = 'public'"
         if table_names:
             tables_str = ",".join([f"'{t}'" for t in table_names])
             query += f" AND table_name IN ({tables_str})"
+        query += " ORDER BY table_name, ordinal_position"
         
         try:
             with pool.connection() as conn:
@@ -167,7 +226,27 @@ class SQLEngine:
                         current_table = col["table_name"]
                         schema_parts.append(f"\nTable: {current_table}")
                     
-                    schema_parts.append(f" - {col['column_name']} ({col['data_type']})")
+                    dtype = col["data_type"]
+                    udt = col["udt_name"]
+                    col_name = col["column_name"]
+                    
+                    # 1. Resolve ENUMs
+                    if dtype == "USER-DEFINED" and udt in enum_map:
+                        vals = ", ".join([f"'{v}'" for t in [udt] for v in enum_map[t]])
+                        dtype = f"ENUM: {vals}"
+                    
+                    # 2. Add hints for ARRAYs (Specific to Pagila special_features)
+                    elif dtype == "ARRAY":
+                        if col_name == "special_features":
+                            dtype = "ARRAY (Examples: 'Trailers', 'Commentaries', 'Deleted Scenes', 'Behind the Scenes')"
+                        else:
+                            dtype = "ARRAY"
+                            
+                    # 3. Add hints for Full-Text Search
+                    elif dtype == "tsvector":
+                        dtype = "tsvector (Full-Text Search Index)"
+                    
+                    schema_parts.append(f" - {col_name} ({dtype})")
                 
                 return "\n".join(schema_parts)
         except Exception as e:

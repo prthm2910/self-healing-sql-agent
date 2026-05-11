@@ -8,7 +8,8 @@ from src.workflow.nodes import (
     guardian_node,
     classifier_node,
     clarify_node,
-    schema_selector_node,
+    anchor_selector_node,
+    column_pruner_node,
     generate_sql_node, 
     execute_sql_node, 
     heal_sql_node, 
@@ -29,10 +30,10 @@ def guardian_router(state: State) -> Literal["classifier", "clarify", "end"]:
         return "clarify"
     return "end"
 
-def classifier_router(state: State) -> Literal["generate_sql", "schema_selector"]:
+def classifier_router(state: State) -> Literal["generate_sql", "anchor_selector"]:
     """Routes based on query complexity."""
     if state.get("is_complex"):
-        return "schema_selector"
+        return "anchor_selector"
     return "generate_sql"
 
 def healing_router(state: State) -> Literal["heal_sql", "format_response"]:
@@ -62,7 +63,8 @@ def build_chatbot_graph():
     builder.add_node("guardian", guardian_node)
     builder.add_node("classifier", classifier_node)
     builder.add_node("clarify", clarify_node)
-    builder.add_node("schema_selector", schema_selector_node)
+    builder.add_node("anchor_selector", anchor_selector_node)
+    builder.add_node("column_pruner", column_pruner_node)
     builder.add_node("generate_sql", generate_sql_node)
     builder.add_node("execute_sql", execute_sql_node)
     builder.add_node("heal_sql", heal_sql_node)
@@ -81,11 +83,12 @@ def build_chatbot_graph():
     builder.add_edge("clarify", END)
 
     builder.add_conditional_edges("classifier", classifier_router, {
-        "schema_selector": "schema_selector",
+        "anchor_selector": "anchor_selector",
         "generate_sql": "generate_sql"
     })
 
-    builder.add_edge("schema_selector", "generate_sql")
+    builder.add_edge("anchor_selector", "column_pruner")
+    builder.add_edge("column_pruner", "generate_sql")
     builder.add_edge("generate_sql", "execute_sql")
 
     builder.add_conditional_edges("execute_sql", healing_router, {
