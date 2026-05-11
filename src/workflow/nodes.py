@@ -213,59 +213,60 @@ def clarify_node(state: State, config: RunnableConfig):
     
     return {"messages": [AIMessage(content=res.clarification_question)]}
 
-def schema_selector_node(state: State, config: RunnableConfig, store=None):
-    """Hybrid Discovery: Identifies Anchor tables, finds FK Bridges, and prunes columns."""
+def anchor_selector_node(state: State, config: RunnableConfig, store=None):
+    """Hybrid Discovery Phase 1: Two-Pass Entity Extraction & Physical Table Mapping."""
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id", settings.default_user_id)
     token = log_context.set({"user_id": user_id, "thread_id": configurable.get("thread_id", "unknown")})       
-    
+
     try:
-        logger.info("Node: schema_selector")
+        logger.info("Node: anchor_selector")
         last_msg = state["messages"][-1].content
         all_tables = sql_engine.list_tables()
-        
-        # 1. Anchor Identification
-        anchor_prompt = f"""Given the user question and the list of tables, select the 2-3 most relevant 'Anchor' tables.
+
+        # Pass 1: Semantic Entity Extraction
+        entity_prompt = f"""Identify the core database entities and filters mentioned in this question.        
 Question: "{last_msg}"
-Tables: {all_tables}
+Example Entities: 'Canada', 'Action', 'most rentals', 'spent'.
 """
-        # Use structured output to avoid brittle split(",")
+        # We can reuse AnchorSelection model or a simple prompt
+        # Let's use a simple direct extraction for now to keep it fast
+        entity_res = llm.invoke([SystemMessage(content=entity_prompt)])
+        entities = entity_res.content
+
+        # Pass 2: Hard Physical Table Mapping
+        mapping_prompt = f"""You are a Database Architect. Map the following entities to the specific PHYSICAL tables needed to query them.
+Entities Found: {entities}
+Available Tables: {all_tables}
+
+### CRITICAL RULES:
+- If 'Canada' or geographic filters are mentioned, include 'country'.
+- If 'Action' or categories are mentioned, include 'category'.
+- If 'spent' or 'amount' is mentioned, include 'payment'.
+- NEVER select views (ending in '_info' or '_list').
+"""
         anchor_chain = llm.with_structured_output(AnchorSelection)
-        anchor_res = anchor_chain.invoke([SystemMessage(content=anchor_prompt)])
+        anchor_res = anchor_chain.invoke([SystemMessage(content=mapping_prompt)])
         anchors = [a for a in anchor_res.anchors if a in all_tables]
-        
-        logger.info(f"Anchors Identified: {anchors} | Thought: {getattr(anchor_res, 'thought_process', 'N/A')}")
-        
-        # 2. Deterministic FK Bridge Traversal (Python)
+
+        # 3. Deterministic FK Bridge Traversal
         bridges = sql_engine.get_bridge_tables(anchors)
         selected_tables = list(set(anchors + bridges))
-        
-        logger.info(f"Bridges Found: {bridges} | Total Tables: {selected_tables}")
-        
-        # 3. Column Pruning
-        # Fetch partial schema for the selected tables
-        partial_schema = sql_engine.get_schema(selected_tables)
-        
-        pruning_prompt = f"""You are a Data Architect. Prune the schema below to ONLY include the columns needed for this specific question.
-Question: "{last_msg}"
-Schema:
-{partial_schema}
-"""
-        chain = llm.with_structured_output(SchemaSelectorOutput)
-        res = chain.invoke([SystemMessage(content=pruning_prompt)])
-        res.node_name = "schema_selector"
-        res.selected_tables = selected_tables
-        res.fk_path_identified = f"Connected {anchors} via {bridges}"
-        
-        logger.info(f"Pruned columns for {len(res.selected_columns)} tables.")
+
+        logger.info(f"Join Topology: Anchors={anchors} | Bridges={bridges}")
 
         logs = state.get("agent_logs", [])
-        logs.append(res.model_dump())
-        
+        logs.append({
+            "node_name": "anchor_selector",
+            "anchors": anchors,
+            "bridges": bridges,
+            "selected_tables": selected_tables,
+            "thought_process": getattr(anchor_res, "thought_process", "")
+        })
+
         return {"selected_tables": selected_tables, "agent_logs": logs}
     finally:
         log_context.reset(token)
-
 def generate_sql_node(state: State, config: RunnableConfig, store=None):
     """Generates SQL query using surgically pruned schema and tiered lessons."""
     configurable = config.get("configurable", {})
