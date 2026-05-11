@@ -224,15 +224,14 @@ def anchor_selector_node(state: State, config: RunnableConfig, store=None):
         last_msg = state["messages"][-1].content
         all_tables = sql_engine.list_tables()
 
-        # Pass 1: Semantic Entity Extraction
+        # Pass 1: Semantic Entity Extraction (Structured)
         entity_prompt = f"""Identify the core database entities and filters mentioned in this question.        
 Question: "{last_msg}"
 Example Entities: 'Canada', 'Action', 'most rentals', 'spent'.
 """
-        # We can reuse AnchorSelection model or a simple prompt
-        # Let's use a simple direct extraction for now to keep it fast
-        entity_res = llm.invoke([SystemMessage(content=entity_prompt)])
-        entities = entity_res.content
+        entity_chain = llm.with_structured_output(AnchorSelection)
+        entity_res = entity_chain.invoke([SystemMessage(content=entity_prompt)])
+        entities = ", ".join(entity_res.anchors)
 
         # Pass 2: Hard Physical Table Mapping
         mapping_prompt = f"""You are a Database Architect. Map the following entities to the specific PHYSICAL tables needed to query them.
