@@ -133,6 +133,28 @@ class SQLEngine:
                     visited.add(next_node)
                     queue.append((next_node, path + [next_node]))
         return None
+
+    @traceable(name="Get Relevant FKs", run_type="tool")
+    def get_relevant_fks(self, table_names: List[str]) -> List[Dict[str, str]]:
+        """
+        Fetches foreign key relationships between the specified tables.
+        
+        Returns:
+            List[Dict]: List of FK definitions: {'source': table, 'col': col, 'target_table': table, 'target_col': col}
+        """
+        all_fks = self.fk_map
+        relevant_fks = []
+        for table in table_names:
+            if table in all_fks:
+                for col, target_info in all_fks[table].items():
+                    if target_info["table"] in table_names:
+                        relevant_fks.append({
+                            "source_table": table,
+                            "source_column": col,
+                            "target_table": target_info["table"],
+                            "target_column": target_info["column"]
+                        })
+        return relevant_fks
         
     def _get_pool(self):
         """Lazy initialization of the SQL connection pool."""
