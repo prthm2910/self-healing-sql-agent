@@ -118,14 +118,6 @@ class SQLEngine:
         
         while queue:
             (node, path) = queue.pop(0)
-            # Use .get(node, {}).values() but we need to extract the table name
-            neighbors = set()
-            if node in self.fk_map:
-                for target_info in self.fk_map[node].values():
-                    neighbors.add(target_info["table"])
-            
-            # BFS also needs the inverse relationships (who points to me?)
-            # This is handled by self.graph which I should also update
             for next_node in self.graph.get(node, []):
                 if next_node == end:
                     return path + [next_node]
