@@ -205,12 +205,15 @@ class SQLEngine:
             return {}
 
     def get_schema(self, table_names: Optional[List[str]] = None) -> str:
-        """Returns schema using the lazy-loaded pool."""
+        """Returns schema with ENUM values resolved and complex type hints."""
         pool = self._get_pool()
-        query = "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'public'"
+        enum_map = self._get_enum_map()
+        
+        query = "SELECT table_name, column_name, data_type, udt_name FROM information_schema.columns WHERE table_schema = 'public'"
         if table_names:
             tables_str = ",".join([f"'{t}'" for t in table_names])
             query += f" AND table_name IN ({tables_str})"
+        query += " ORDER BY table_name, ordinal_position"
         
         try:
             with pool.connection() as conn:
@@ -223,7 +226,27 @@ class SQLEngine:
                         current_table = col["table_name"]
                         schema_parts.append(f"\nTable: {current_table}")
                     
-                    schema_parts.append(f" - {col['column_name']} ({col['data_type']})")
+                    dtype = col["data_type"]
+                    udt = col["udt_name"]
+                    col_name = col["column_name"]
+                    
+                    # 1. Resolve ENUMs
+                    if dtype == "USER-DEFINED" and udt in enum_map:
+                        vals = ", ".join([f"'{v}'" for t in [udt] for v in enum_map[t]])
+                        dtype = f"ENUM: {vals}"
+                    
+                    # 2. Add hints for ARRAYs (Specific to Pagila special_features)
+                    elif dtype == "ARRAY":
+                        if col_name == "special_features":
+                            dtype = "ARRAY (Examples: 'Trailers', 'Commentaries', 'Deleted Scenes', 'Behind the Scenes')"
+                        else:
+                            dtype = "ARRAY"
+                            
+                    # 3. Add hints for Full-Text Search
+                    elif dtype == "tsvector":
+                        dtype = "tsvector (Full-Text Search Index)"
+                    
+                    schema_parts.append(f" - {col_name} ({dtype})")
                 
                 return "\n".join(schema_parts)
         except Exception as e:
