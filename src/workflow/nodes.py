@@ -267,6 +267,60 @@ Available Tables: {all_tables}
         return {"selected_tables": selected_tables, "agent_logs": logs}
     finally:
         log_context.reset(token)
+
+def column_pruner_node(state: State, config: RunnableConfig, store=None):
+    """Hybrid Discovery Phase 2: Surgically prunes columns while protecting Join Keys."""
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id", settings.default_user_id)
+    token = log_context.set({"user_id": user_id, "thread_id": configurable.get("thread_id", "unknown")})       
+    
+    try:
+        logger.info("Node: column_pruner")
+        last_msg = state["messages"][-1].content
+        selected_tables = state["selected_tables"]
+        
+        # Fetch relationships and partial schema
+        fk_relationships = sql_engine.get_relevant_fks(selected_tables)
+        partial_schema = sql_engine.get_schema(selected_tables)
+        
+        pruning_prompt = f"""You are a Data Architect. Prune the schema below to ONLY include the columns needed for this question.
+Question: "{last_msg}"
+Schema:
+{partial_schema}
+Relationships:
+{fk_relationships}
+
+### CRITICAL RULES:
+1. You MUST retain ALL columns mentioned in the 'Relationships' list (Join Keys).
+2. Retain columns needed for filters (WHERE), ordering (ORDER BY), and display (SELECT).
+"""
+        chain = llm.with_structured_output(SchemaSelectorOutput)
+        res = chain.invoke([SystemMessage(content=pruning_prompt)])
+        res.node_name = "column_pruner"
+        
+        # Deterministic Guard: Ensure all selected tables exist and Join Keys are preserved
+        pruned_cols = res.selected_columns
+        for table in selected_tables:
+            if table not in pruned_cols: pruned_cols[table] = []
+            
+        for rel in fk_relationships:
+            if rel["source_column"] not in pruned_cols[rel["source_table"]]:
+                pruned_cols[rel["source_table"]].append(rel["source_column"])
+            if rel["target_column"] not in pruned_cols[rel["target_table"]]:
+                pruned_cols[rel["target_table"]].append(rel["target_column"])
+        
+        logger.info(f"Pruning complete for {len(pruned_cols)} tables.")
+        
+        logs = state.get("agent_logs", [])
+        logs.append(res.model_dump())
+        
+        return {
+            "selected_columns": pruned_cols, 
+            "fk_relationships": fk_relationships,
+            "agent_logs": logs
+        }
+    finally:
+        log_context.reset(token)
 def generate_sql_node(state: State, config: RunnableConfig, store=None):
     """Generates SQL query using surgically pruned schema and tiered lessons."""
     configurable = config.get("configurable", {})
