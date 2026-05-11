@@ -184,6 +184,34 @@ class SQLEngine:
             logger.error(f"SQL Execution Failed. Error: {str(e)}")
             return {"status": "error", "error_message": str(e), "query": query}
 
+    def _get_enum_map(self) -> Dict[str, List[str]]:
+        """Fetches all ENUM types and their allowed values."""
+        query = """
+        SELECT
+            t.typname AS enum_name,
+            e.enumlabel AS enum_value
+        FROM pg_type t
+        JOIN pg_enum e ON t.oid = e.enumtypid
+        JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+        WHERE n.nspname = 'public'
+        ORDER BY t.typname, e.enumsortorder;
+        """
+        enum_map = {}
+        try:
+            pool = self._get_pool()
+            with pool.connection() as conn:
+                results = conn.execute(query).fetchall()
+                for row in results:
+                    name = row["enum_name"]
+                    val = row["enum_value"]
+                    if name not in enum_map:
+                        enum_map[name] = []
+                    enum_map[name].append(val)
+                return enum_map
+        except Exception as e:
+            logger.error(f"Failed to fetch ENUM map: {str(e)}")
+            return {}
+
     def get_schema(self, table_names: Optional[List[str]] = None) -> str:
         """Returns schema using the lazy-loaded pool."""
         pool = self._get_pool()
