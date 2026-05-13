@@ -11,18 +11,10 @@ class LoggedChatOpenAI(ChatOpenAI):
     
     def invoke(self, input, config=None, **kwargs):
         
-        # Ensure total API consumption stays within budget with a short retry loop
-        max_retries = 3
-        for attempt in range(max_retries):
-            if rate_limiter.check_and_record():
-                break
-            
-            if attempt < max_retries - 1:
-                logger.warning(f"Rate limit reached. Retrying in 2s (Attempt {attempt+1}/{max_retries})...")
-                time.sleep(2)
-            else:
-                logger.error("Global Rate Limit Reached after retries!")
-                raise RuntimeError("API Rate Limit Exceeded. Please try again in a minute.")
+        # Ensure total API consumption stays within budget by WAITING for a slot
+        if not rate_limiter.wait_and_record(timeout=30.0):
+            logger.error("Global Rate Limit Timeout!")
+            raise RuntimeError("API Rate Limit Exceeded and wait timeout reached.")
 
         logger.info(f"Invoking LLM ({self.model_name or self.model})...")
         try:
@@ -41,10 +33,13 @@ class LoggedChatOpenAI(ChatOpenAI):
 def get_llm():
     """Factory to get the requested logged LLM provider."""
     model = settings.model_name
-    logger.debug(f"Instantiating LLM (model: {model})")
+    api_key = settings.nvidia_api_key
+    base_url = settings.nim_base_url
+    
+    logger.debug(f"Instantiating LLM (model: {model}) at {base_url}")
     return LoggedChatOpenAI(
         model=model,
-        api_key=settings.nvidia_api_key,
-        base_url=settings.nim_base_url,
+        api_key=api_key,
+        base_url=base_url,
         temperature=0
     )

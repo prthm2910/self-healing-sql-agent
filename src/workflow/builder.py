@@ -1,5 +1,6 @@
-from typing import Literal
+from typing import Literal, List, Dict, Any
 from langgraph.graph import StateGraph, START, END
+from langgraph.types import Send
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.store.postgres import PostgresStore
 
@@ -10,6 +11,9 @@ from src.workflow.nodes import (
     clarify_node,
     anchor_selector_node,
     column_pruner_node,
+    decomposer_node,
+    worker_node,
+    assembler_node,
     generate_sql_node, 
     execute_sql_node, 
     heal_sql_node, 
@@ -36,15 +40,24 @@ def classifier_router(state: State) -> Literal["generate_sql", "anchor_selector"
         return "anchor_selector"
     return "generate_sql"
 
+def decomposer_router(state: State):
+    """Parallel Send router for Worker Nodes."""
+    sub_tasks = state.get("sub_tasks", [])
+    # Dispatch workers in parallel
+    return [Send("worker", {"current_task": task}) for task in sub_tasks]
+
 def healing_router(state: State) -> Literal["heal_sql", "format_response"]:
     if state.get("sql_error"):
         if state.get("retry_count", 0) < 3:
             return "heal_sql"
     return "format_response"
 
-def build_chatbot_graph():
+def build_chatbot_graph(checkpointer=None):
     pool = get_connection_pool()
-    checkpointer = PostgresSaver(pool)
+    if checkpointer is None:
+        checkpointer = PostgresSaver(pool)
+        checkpointer.setup()
+    
     store = PostgresStore(
         pool,
         index={
@@ -53,8 +66,6 @@ def build_chatbot_graph():
             "fields": ["$"]
         }
     )
-    
-    checkpointer.setup()
     store.setup()
 
     builder = StateGraph(State)
@@ -65,12 +76,15 @@ def build_chatbot_graph():
     builder.add_node("clarify", clarify_node)
     builder.add_node("anchor_selector", anchor_selector_node)
     builder.add_node("column_pruner", column_pruner_node)
+    builder.add_node("decomposer", decomposer_node)
+    builder.add_node("worker", worker_node)
+    builder.add_node("assembler", assembler_node)
     builder.add_node("generate_sql", generate_sql_node)
     builder.add_node("execute_sql", execute_sql_node)
     builder.add_node("heal_sql", heal_sql_node)
     builder.add_node("format_response", format_sql_response_node)
 
-    # --- Defined Logic ---
+    # 2. Define Logic
     builder.add_edge(START, "guardian")
     
     builder.add_conditional_edges("guardian", guardian_router, {
@@ -79,7 +93,6 @@ def build_chatbot_graph():
         "end": END
     })
 
-    # Clarification node just asks the question and ends the turn
     builder.add_edge("clarify", END)
 
     builder.add_conditional_edges("classifier", classifier_router, {
@@ -87,10 +100,17 @@ def build_chatbot_graph():
         "generate_sql": "generate_sql"
     })
 
+    # Complex Path (Divide & Conquer)
     builder.add_edge("anchor_selector", "column_pruner")
-    builder.add_edge("column_pruner", "generate_sql")
+    builder.add_edge("column_pruner", "decomposer")
+    builder.add_conditional_edges("decomposer", decomposer_router, ["worker"])
+    builder.add_edge("worker", "assembler")
+    builder.add_edge("assembler", "execute_sql")
+
+    # Simple Path
     builder.add_edge("generate_sql", "execute_sql")
 
+    # Execution & Healing
     builder.add_conditional_edges("execute_sql", healing_router, {
         "heal_sql": "heal_sql",
         "format_response": "format_response"
