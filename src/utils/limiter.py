@@ -12,18 +12,33 @@ class GlobalRateLimiter:
         self.requests = []
         self.lock = threading.Lock()
 
+    def wait_and_record(self, timeout: float = 60.0) -> bool:
+        """
+        Blocks until a request slot is available or timeout is reached.
+        """
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            with self.lock:
+                now = time.time()
+                # Clean up old timestamps (older than 60s)
+                self.requests = [t for t in self.requests if now - t < 60]
+                
+                if len(self.requests) < self.rpm_limit:
+                    self.requests.append(now)
+                    return True
+            
+            # Slot not available, wait a bit
+            time.sleep(0.5)
+            
+        return False
+
     def check_and_record(self) -> bool:
-        """
-        Checks if a request is allowed and records it if so.
-        """
+        """Non-blocking check (Legacy support)."""
         with self.lock:
             now = time.time()
-            # Clean up old timestamps (older than 60s)
             self.requests = [t for t in self.requests if now - t < 60]
-            
             if len(self.requests) >= self.rpm_limit:
                 return False
-            
             self.requests.append(now)
             return True
 
@@ -34,4 +49,4 @@ class GlobalRateLimiter:
             return len(self.requests)
 
 # Singleton Instance for the entire App
-rate_limiter = GlobalRateLimiter(rpm_limit=35)
+rate_limiter = GlobalRateLimiter(rpm_limit=20)

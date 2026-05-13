@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     # API Keys
     nvidia_api_key: str
     google_api_key: str
-    
+
     # Database Settings
     database_url: str
     
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # App Settings
     default_user_id: str = "user_123"
     memory_tag: str = "[MEMORIZE]"
-    rate_limit_rpm: int = 30
+    rate_limit_rpm: int = 35
     context_window_size: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

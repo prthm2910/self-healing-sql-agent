@@ -7,3 +7,4 @@ psycopg[binary]
 python-dotenv
 pytest
 pydantic-settings
+sqlglot>=23.0.0
