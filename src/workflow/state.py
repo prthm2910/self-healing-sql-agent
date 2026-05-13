@@ -1,3 +1,4 @@
+import operator
 from typing import Annotated, TypedDict, List, Dict, Any, Optional
 from langgraph.graph.message import add_messages
 
@@ -13,9 +14,11 @@ class State(TypedDict):
     
     # Divide and Conquer fields
     sub_tasks: List[Dict[str, Any]] # List of atomic SQL generation tasks
-    join_plan: str # Instructions for the Assembler
+    join_plan: Dict[str, Any] # Structured instructions for the Assembler
+    sql_snippets: Annotated[Dict[str, str], operator.ior] # Merged by task_id (ior : In Place OR)
+    current_task_index: int # Iterator for sequential or verification loops
     
-    agent_logs: List[Dict[str, Any]] # Observability trail for all nodes
+    agent_logs: Annotated[List[Dict[str, Any]], operator.add] # Append-only log
 
     # SQL Agent fields
     current_sql: str
