@@ -8,13 +8,14 @@ class Settings(BaseSettings):
     """Application settings and environment validation."""
 
     # LLM Settings
-    model_name: str = Field(default="meta/llama-3.1-8b-instruct")
+    model_name: str = Field(default="openai/gpt-oss-20b")
     nim_base_url: str = "https://integrate.api.nvidia.com/v1"
     
     # API Keys
-    nvidia_api_key: str
+    nvidia_api_key: str = ""
+    groq_api_key: str = ""
     google_api_key: str
-    
+
     # Database Settings
     database_url: str
     
@@ -25,7 +26,7 @@ class Settings(BaseSettings):
     # App Settings
     default_user_id: str = "user_123"
     memory_tag: str = "[MEMORIZE]"
-    rate_limit_rpm: int = 30
+    rate_limit_rpm: int = 35
     context_window_size: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

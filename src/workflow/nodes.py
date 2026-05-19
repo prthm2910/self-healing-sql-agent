@@ -1,19 +1,22 @@
 import threading
+import time
+import sqlglot
 
-from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from src.services.llm import get_llm
-from src.services.sql_engine import sql_engine
+from src.services.sql_engine import SQLTranspiler, sql_engine
 from src.prompts.sql_agent import (
     get_sql_generation_prompt, 
-    get_sql_healing_prompt, 
-    get_sql_response_format_prompt
+    get_sql_healing_prompt,     
+    get_sql_response_format_prompt,
+    get_decomposer_prompt,
+    get_worker_prompt
 )
 from src.prompts.assistant import get_assistant_prompt
 from src.core.config import settings
 from src.workflow.state import State
-from src.workflow.schema import SQLResponse
 from src.utils.logger import logger, log_context
 from src.utils.table import generate_markdown_table
 from src.utils.limiter import rate_limiter
@@ -23,16 +26,78 @@ from src.workflow.schema import (
     GuardianOutput, 
     ClassifierOutput,
     LessonDistillationOutput, 
-    SchemaSelectorOutput,
+    SchemaSelectorOutput,    
     AnchorSelection,
     ClarificationOutput,
     SQLGenerationOutput,
     ExecuteSQLOutput,
-    ChatbotResponse
+    ChatbotResponse,
+    DecomposerOutput,
+    WorkerOutput,
+    SubTask,
+    JoinPlan
 )
 
 # Initialize single 8B model for ALL tasks
 llm = get_llm()
+
+def decomposer_node(state: State, config: RunnableConfig):
+    """
+    The Manager Node: Decomposes complex queries into atomic sub-tasks and a Join Plan.
+    Utilizes 'Skeleton Knowledge' (Tables + FK Paths) from the Anchor Selector.
+    """
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id", settings.default_user_id)
+    token = log_context.set({"user_id": user_id, "thread_id": configurable.get("thread_id", "unknown")})
+    
+    try:
+        logger.info("Node: decomposer_node (Manager)")
+        user_question = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
+        
+        selected_tables = state.get("selected_tables", [])
+        fk_relationships = state.get("fk_relationships", [])
+        
+        # Build detailed Skeleton Schema (Table names + Columns) to prevent hallucinations
+        full_schema_obj = sql_engine.get_schema_object(selected_tables)
+        skeleton_schema = f"Tables & Columns: {full_schema_obj}\nRelationships: {fk_relationships}"
+        
+        prompt_template = get_decomposer_prompt()
+        # Manager uses 8B Flash for high-speed planning.
+        chain = prompt_template | llm.with_structured_output(DecomposerOutput)
+        res = chain.invoke({
+            "skeleton_schema": skeleton_schema,
+            "question": user_question
+        })
+        res.node_name = "decomposer"
+        
+        # --- DETERMINISTIC JOIN KEY INJECTION ---
+        # Ensure every column mentioned in the JoinPlan steps is in the required_columns of the relevant sub-tasks.
+        task_map = {t.task_id: t for t in res.sub_tasks}
+        for step in res.join_plan.steps:
+            for task_id in [step.left, step.right]:
+                if task_id in task_map:
+                    if step.on not in task_map[task_id].required_columns:
+                        logger.info(f"Injecting missing join key '{step.on}' into {task_id}")
+                        task_map[task_id].required_columns.append(step.on)
+
+        logger.info(f"Decomposition complete: {len(res.sub_tasks)} tasks planned. Complexity: {res.complexity_score}")
+        
+        logs = state.get("agent_logs", [])
+        logs.append(res.model_dump())
+        
+        # Convert Pydantic models to Dicts for state storage
+        sub_tasks_dict = [t.model_dump() for t in res.sub_tasks]
+        join_plan_dict = res.join_plan.model_dump()
+        
+        return {
+            "sub_tasks": sub_tasks_dict,
+            "join_plan": join_plan_dict,
+            "sql_snippets": {}, # Initialize snippet storage
+            "current_task_index": 0,
+            "agent_logs": logs
+        }
+    finally:
+        log_context.reset(token)
 
 def call_chatbot(state: State, config: RunnableConfig, store=None):
     """
@@ -56,6 +121,7 @@ def call_chatbot(state: State, config: RunnableConfig, store=None):
 
         # --- ASSEMBLE & INVOKE ---
         prompt_template = get_assistant_prompt()
+        # Use json_mode for structured output
         chain = prompt_template | llm.with_structured_output(ChatbotResponse)
         
         logger.info(f"Chatbot Node | Lessons: {len(applied_titles)} {applied_titles if applied_titles else ''}")
@@ -108,7 +174,7 @@ We asked for clarification. Their latest message is: "{last_msg}".
 DOMAIN SUMMARY:
 {domain_summary}
 
-### CLASSIFICATION RULES:
+### CLASSIFICATION RULES (Output JSON keys: "intent", "thought_process"):
 - SQL: The new message, combined with the previous context, now forms a clear and valid SQL request about the domain.
 - CLARIFY: The message is related but still vague. We stay in the clarification loop.
 - DENY: The user has clearly changed the subject to something irrelevant OR is asking to modify data.
@@ -122,7 +188,7 @@ Analyze the user message and determine if it relates to the database domain desc
 DOMAIN SUMMARY:
 {domain_summary}
 
-### CLASSIFICATION RULES:
+### CLASSIFICATION RULES (Output JSON keys: "intent", "thought_process"):
 - SQL: The request is a clear, actionable question about querying or analyzing data from the domain.
 - CLARIFY: The request is related to the domain but is too vague, ambiguous, or underspecified to generate SQL for (e.g., "Tell me about films" without criteria).
 - DENY: The request is NOT about the domain, asks to MODIFY data, or is general chitchat.
@@ -175,19 +241,31 @@ def classifier_node(state: State, config: RunnableConfig, store=None):
     token = log_context.set({"user_id": user_id, "thread_id": configurable.get("thread_id", "unknown")})       
     
     try:
-        logger.info("Node: classifier_node")
-        last_msg = state["messages"][-1].content
+        # Get last 3 human messages for context (handles "try again" or follow-ups)
+        human_msgs = [m.content for m in state["messages"] if isinstance(m, HumanMessage)][-3:]
+        context_msg = " | ".join(human_msgs)
+        last_msg = human_msgs[-1] if human_msgs else ""
+        
+        logger.info(f"Node: classifier_node | Classifying message: {last_msg[:30]} | Context: {context_msg[:50]}...")
         
         prompt = f"""You are a SQL Query Planner. 
-Analyze the user question and determine if it requires joining multiple tables.
+Analyze the user interaction and determine if the current request requires joining multiple tables (COMPLEX) or if it is a single-table query (SIMPLE).
 
-User Question: "{last_msg}"
+### CONTEXT (Last messages):
+{context_msg}
 
-### GUIDELINES:
-- SIMPLE: Questions that can be answered using a SINGLE table (e.g., "List films", "Count customers", "Top 10 most expensive films"). 
-- COMPLEX: Questions requiring JOINS between 2 or more tables (e.g., "Which customers rented Action films?", "Revenue by category").
+### CURRENT QUESTION TO CLASSIFY:
+"{last_msg}"
 
-NOTE: Sorting or limiting on a single table is STILL SIMPLE.
+### EXAMPLES:
+- "What are the first 10 films?" -> SIMPLE
+- "Canada Action films" -> COMPLEX
+- "try again" (where previous was Canada films) -> COMPLEX
+- "count them" (where previous was customers) -> SIMPLE
+
+### GUIDELINES (Output JSON keys: "is_complex", "thought_process"):
+- If the current message is a follow-up like "try again", "run it", or "go ahead", use the PREVIOUS context to decide.
+- If any geographic (Country/City) or category filters were mentioned recently, it is COMPLEX.
 """
         chain = llm.with_structured_output(ClassifierOutput)
         res = chain.invoke([SystemMessage(content=prompt)])
@@ -208,7 +286,7 @@ def clarify_node(state: State, config: RunnableConfig):
     
     # Use structured output
     chain = llm.with_structured_output(ClarificationOutput)
-    prompt = f"The user asked: '{state['messages'][-1].content}'. This is too vague for a SQL query. Ask a concise follow-up question to clarify what they want to see from the DVD rental database."
+    prompt = f"The user asked: '{state['messages'][-1].content}'. This is too vague for a SQL query. Ask a concise follow-up question to clarify what they want to see from the DVD rental database. Output MUST be valid JSON with key: 'clarification_question'."
     res = chain.invoke(prompt)
     
     return {"messages": [AIMessage(content=res.clarification_question)]}
@@ -225,7 +303,7 @@ def anchor_selector_node(state: State, config: RunnableConfig, store=None):
         all_tables = sql_engine.list_tables()
 
         # Pass 1: Semantic Entity Extraction (Structured)
-        entity_prompt = f"""Identify the core database entities and filters mentioned in this question.        
+        entity_prompt = f"""Identify the core database entities and filters mentioned in this question. Output MUST be valid JSON with keys: "anchors", "thought_process".
 Question: "{last_msg}"
 Example Entities: 'Canada', 'Action', 'most rentals', 'spent'.
 """
@@ -234,7 +312,7 @@ Example Entities: 'Canada', 'Action', 'most rentals', 'spent'.
         entities = ", ".join(entity_res.anchors)
 
         # Pass 2: Hard Physical Table Mapping
-        mapping_prompt = f"""You are a Database Architect. Map the following entities to the specific PHYSICAL tables needed to query them.
+        mapping_prompt = f"""You are a Database Architect. Map the following entities to the specific PHYSICAL tables needed to query them. Output MUST be valid JSON with keys: "anchors", "thought_process".
 Entities Found: {entities}
 Available Tables: {all_tables}
 
@@ -282,7 +360,7 @@ def column_pruner_node(state: State, config: RunnableConfig, store=None):
         fk_relationships = sql_engine.get_relevant_fks(selected_tables)
         partial_schema = sql_engine.get_schema(selected_tables)
         
-        pruning_prompt = f"""You are a Data Architect. Prune the schema below to ONLY include the columns needed for this question.
+        pruning_prompt = f"""You are a Data Architect. Prune the schema below to ONLY include the columns needed for this question. Output MUST be valid JSON with keys: "selected_tables", "selected_columns", "fk_relationships", "fk_path_identified", "thought_process".
 Question: "{last_msg}"
 Schema:
 {partial_schema}
@@ -297,8 +375,12 @@ Relationships:
         res = chain.invoke([SystemMessage(content=pruning_prompt)])
         res.node_name = "column_pruner"
         
+        # Convert List[ColumnSelection] to Dict[str, List[str]] for state compatibility
+        pruned_cols = {item.table_name: item.columns for item in res.selected_columns}
+        # Convert List[FKRelationship] to List[Dict] for state compatibility
+        pruned_fks = [rel.model_dump() for rel in res.fk_relationships]
+        
         # Deterministic Guard: Ensure all selected tables exist and Join Keys are preserved
-        pruned_cols = res.selected_columns
         for table in selected_tables:
             if table not in pruned_cols: pruned_cols[table] = []
             
@@ -315,11 +397,12 @@ Relationships:
         
         return {
             "selected_columns": pruned_cols, 
-            "fk_relationships": fk_relationships,
+            "fk_relationships": pruned_fks,
             "agent_logs": logs
         }
     finally:
         log_context.reset(token)
+
 def generate_sql_node(state: State, config: RunnableConfig, store=None):
     """Generates SQL query using surgically pruned schema and tiered lessons."""
     configurable = config.get("configurable", {})
@@ -329,10 +412,6 @@ def generate_sql_node(state: State, config: RunnableConfig, store=None):
     try:
         logger.info("Node: generate_sql")
         user_question = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
-        
-        # Priority 1: Use surgical pruned columns from state
-        # Priority 2: Use selected tables from state
-        # Priority 3: Fallback to full schema (Simple queries)
         
         selected_columns = state.get("selected_columns")
         selected_tables = state.get("selected_tables")
@@ -373,7 +452,6 @@ def generate_sql_node(state: State, config: RunnableConfig, store=None):
 def execute_sql_node(state: State, config: RunnableConfig):
     """
     Executes the current SQL query and captures results or errors.
-    Detects if the result is an aggregate (1x1).
     """
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id", settings.default_user_id)
@@ -389,7 +467,6 @@ def execute_sql_node(state: State, config: RunnableConfig):
 
         if result.status == "success":
             data = result.data
-            # Detect 1x1 shape (Aggregate)
             is_aggregated = False
             if len(data) == 1:
                 row = data[0]
@@ -404,70 +481,6 @@ def execute_sql_node(state: State, config: RunnableConfig):
     finally:
         log_context.reset(token)
 
-def _background_distill_lesson(state_data: dict, store, user_id: str):
-    """
-    Background worker to distill and record high-quality lessons using nested Pydantic structure.
-    """
-    try:
-        current_sql = state_data['current_sql']
-        sql_error = state_data['sql_error']
-        fixed_sql = state_data['fixed_sql']
-        selected_tables = state_data.get('selected_tables')
-
-        learning_prompt = f"""You are a Senior Staff Engineer mentoring junior agents.
-Create a "Golden standard Lesson" from this SQL mistake using the nested structure.
-
-### CONTEXT:
-- FAILED QUERY: {current_sql}
-- ERROR REPORTED: {sql_error}
-- CORRECTED FIX: {fixed_sql}
-- TABLES INVOLVED: {selected_tables or 'unknown'}
-
-### INSTRUCTIONS:
-1. `instruction`: A single, clear, actionable rule.
-2. `mistake`: Describe exactly what went wrong.
-3. `reasoning`: Provide a Markdown report including:
-   - **Root Cause Analysis**
-   - **Future Proofing**
-4. `example`: Populate with the original error and the fixed SQL.
-5. `ending_note`: MUST be "By following this instruction, future models can avoid this specific mistake and write more robust and error-free SQL queries."
-"""
-        distiller = llm.with_structured_output(LessonDistillationOutput)
-        lesson = distiller.invoke([SystemMessage(content=learning_prompt)])
-        
-        # Construct the "Neat and Beautiful" Markdown reasoning for the database
-        formatted_reasoning = f"""### Mistake
-{lesson.body.mistake}
-
-{lesson.body.reasoning}
-
-### Example Comparison
-- **Original Error:**
-```sql
-{lesson.body.example.original_error}
-```
-- **Fixed SQL:**
-```sql
-{lesson.body.example.fixed_sql}
-```
-
----
-*{lesson.ending_note}*"""
-
-        record_lesson(
-            lesson.title, 
-            sql_error, 
-            lesson.body.instruction, 
-            formatted_reasoning, 
-            store, 
-            is_global=lesson.is_global,
-            tags=selected_tables
-        )
-        logger.info(f"[{user_id}] | SUCCESS | Background Task: Recorded lesson: {lesson.title}")
-        
-    except Exception as e:
-        logger.error(f"Background lesson distillation failed: {e}", exc_info=True)
-
 def heal_sql_node(state: State, config: RunnableConfig, store=None):
     """Heals SQL and offloads lesson distillation to a background task."""
     configurable = config.get("configurable", {})
@@ -481,7 +494,6 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
         user_question = next(m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage))
         selected_tables = state.get("selected_tables")
         
-        # Fetch schema from engine (cached)
         full_schema = sql_engine.get_schema_object()
         if selected_tables:
             filtered_schema = {t: full_schema.get(t, []) for t in selected_tables}
@@ -490,7 +502,6 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
             schema_str = str(full_schema)
         
         prompt_template = get_sql_healing_prompt()
-        # Use structured output for robust SQL extraction
         chain = prompt_template | llm.with_structured_output(SQLGenerationOutput)
         res = chain.invoke({
             "schema": schema_str,
@@ -521,11 +532,91 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
     finally:
         log_context.reset(token)
 
+def worker_node(state: State, config: RunnableConfig):
+    """
+    The ReliableWorker Node: Solves an atomic sub-task.
+    """
+    configurable = config.get("configurable", {})
+    task = state.get("current_task") 
+    if not task:
+        idx = state.get("current_task_index", 0)
+        if idx < len(state.get("sub_tasks", [])):
+            task = state["sub_tasks"][idx]
+    
+    if not task:
+        logger.error(f"Worker Node received empty task.")
+        return {"sql_error": "No task assigned to worker"}
+
+    task_id = task.get("task_id") or task.get("id")
+    description = task.get("description") or "No description"
+    
+    logger.info(f"Node: worker_node | Task: {task_id} ({description})")
+    
+    try:
+        selected_tables = task.get("tables", [])
+        required_columns = task.get("required_columns", [])
+        partial_schema = sql_engine.get_schema(selected_tables)
+        
+        prompt = f"""You are a Reliable SQL Worker. Solve the following ATOMIC sub-task for the Pagila database.
+
+TASK: "{description}"
+REQUIRED JOIN KEYS: {required_columns} (These MUST be in your SELECT list)
+SCHEMA:
+{partial_schema}
+
+RULES:
+- Return ONLY valid PostgreSQL.
+- No semicolons.
+- Use explicit aliases (e.g., 't.' for table name).
+- Ensure ALL {required_columns} are in the SELECT list so they can be joined later.
+- STRICT SCHEMA ADHERENCE: Do NOT use columns not listed in the SCHEMA for a given table.
+"""
+        chain = llm.with_structured_output(WorkerOutput)
+        res = chain.invoke([SystemMessage(content=prompt)])
+        sql = res.sql.strip().replace("```sql", "").replace("```", "")
+        
+        try:
+            sqlglot.parse_one(sql, read="postgres")
+            return {
+                "sql_snippets": {task_id: sql},
+                "agent_logs": [res.model_dump()]
+            }
+        except Exception as parse_err:
+            return {
+                "sql_error": f"Task {task_id} syntax error: {str(parse_err)}",
+                "current_sql": sql,
+                "agent_logs": [res.model_dump()]
+            }
+    except Exception as e:
+        return {"sql_error": f"Worker error: {str(e)}"}
+
+def assembler_node(state: State):
+    """
+    The Assembler Node: Deterministically merges all CTE snippets using SQLTranspiler.
+    """
+    logger.info("Node: assembler_node")
+    snippets = state.get("sql_snippets", {})
+    join_plan = state.get("join_plan", {})
+    
+    try:
+        final_sql = SQLTranspiler.merge_snippets(snippets, join_plan)
+        logger.info("SQL Assembly Successful.")
+        
+        logs = state.get("agent_logs", [])
+        logs.append({
+            "node_name": "assembler",
+            "thought_process": f"Stitched {len(snippets)} snippets using Join Plan.",
+            "final_sql": final_sql
+        })
+        
+        return {"current_sql": final_sql, "agent_logs": logs}
+    except Exception as e:
+        logger.error(f"SQL Assembly Failed: {e}")
+        return {"sql_error": f"Assembly Error: {str(e)}"}
 
 def format_sql_response_node(state: State, config: RunnableConfig):
     """
     Ultra-low latency renderer using Flash (8B) for summaries and Python for tables.
-    Prunes input data to 5 rows and handles 1x1 aggregates surgically.
     """
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id", settings.default_user_id)
@@ -533,17 +624,13 @@ def format_sql_response_node(state: State, config: RunnableConfig):
     
     token = log_context.set({"user_id": user_id, "thread_id": thread_id})
     try:
-        logger.info(f"Node: format_sql_response | Aggregated Flag: {state.get('is_aggregated')}")
         user_question = next(m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage))
         raw_results = state.get("sql_results", [])
         is_aggregated = state.get("is_aggregated", False)
 
-        # 1. Prune Data for LLM (First 5 rows only)
         sample_data = raw_results[:5] if len(raw_results) > 5 else raw_results
         
-        # 2. Invoke Flash Model for Summary
         prompt_template = get_sql_response_format_prompt()
-        # Explicitly use llm (Flash 8B) for speed
         chain = prompt_template | llm.with_structured_output(SQLResponse)
         
         try:
@@ -554,34 +641,48 @@ def format_sql_response_node(state: State, config: RunnableConfig):
             })
             
             output_parts = []
-            
-            # A. Summary / Natural Language Answer
             if response.summary:
                 output_parts.append(response.summary)
             elif is_aggregated and raw_results:
-                # Fallback for aggregates if LLM fails to provide a summary
                 val = list(raw_results[0].values())[0]
                 output_parts.append(f"The result is {val}.")
 
-            # B. Table (Only for non-aggregated lists)
             if not is_aggregated and raw_results:
                 table_md = generate_markdown_table(raw_results)
                 output_parts.append(table_md)
                 
-            # C. SQL Block
             if state.get("current_sql"):
                 sql_block = f"**Executed SQL:**\n```sql\n{state['current_sql'].strip()}\n```"
                 output_parts.append(sql_block)
                 
             final_content = "\n\n".join(output_parts)
-            
-            if not final_content:
-                final_content = "I found no results for your query in the database."
-                
-            return {"messages": [AIMessage(content=final_content)]}
+            return {"messages": [AIMessage(content=final_content or "No results found.")]}
             
         except Exception as e:
-            logger.error(f"Formatting failed: {e}")
             return {"messages": [AIMessage(content="I encountered an error while formatting the data.")]}
     finally:
         log_context.reset(token)
+
+def _background_distill_lesson(state_data: dict, store, user_id: str):
+    """Background task for lesson distillation."""
+    try:
+        learning_prompt = f"""You are a Senior Staff Engineer mentoring junior agents.
+Create a "Golden standard Lesson" from this SQL mistake. Output MUST be valid JSON with keys: "is_global", "tags", "title", "body", "ending_note", "thought_process".
+FAIL: {state_data['current_sql']}
+ERROR: {state_data['sql_error']}
+FIX: {state_data['fixed_sql']}
+"""
+        distiller = llm.with_structured_output(LessonDistillationOutput)
+        lesson = distiller.invoke([SystemMessage(content=learning_prompt)])
+        
+        record_lesson(
+            lesson.title, 
+            state_data['sql_error'], 
+            lesson.body.instruction, 
+            lesson.body.reasoning, 
+            store, 
+            is_global=lesson.is_global,
+            tags=state_data.get('selected_tables')
+        )
+    except Exception as e:
+        logger.error(f"Background lesson distillation failed: {e}")

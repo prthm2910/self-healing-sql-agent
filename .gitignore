@@ -30,3 +30,7 @@ logs/
 .code-review-graph/
 *.egg-info/
 tasks/
+.gemini/
+
+# Test assets
+test_questions.txt

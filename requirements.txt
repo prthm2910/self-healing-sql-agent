@@ -1,9 +1,11 @@
 streamlit
 langchain
 langchain-openai
+langchain-groq
 langgraph
 langgraph-checkpoint-postgres
 psycopg[binary]
 python-dotenv
 pytest
 pydantic-settings
+sqlglot>=23.0.0
