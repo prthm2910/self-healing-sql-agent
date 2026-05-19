@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     nim_base_url: str = "https://integrate.api.nvidia.com/v1"
     
     # API Keys
-    nvidia_api_key: str
+    nvidia_api_key: str = ""
+    groq_api_key: str = ""
     google_api_key: str
 
     # Database Settings
