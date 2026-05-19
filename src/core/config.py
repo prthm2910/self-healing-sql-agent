@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     """Application settings and environment validation."""
 
     # LLM Settings
-    model_name: str = Field(default="meta/llama-3.1-8b-instruct")
+    model_name: str = Field(default="openai/gpt-oss-20b")
     nim_base_url: str = "https://integrate.api.nvidia.com/v1"
     
     # API Keys

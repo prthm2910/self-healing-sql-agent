@@ -32,7 +32,7 @@ class LoggedChatGroq(ChatGroq):
 
 def get_llm():
     """Factory to get the requested logged LLM provider (Groq)."""
-    model = "openai/gpt-oss-20b"
+    model = settings.model_name
     api_key = settings.groq_api_key
     
     logger.debug(f"Instantiating ChatGroq (model: {model})")
