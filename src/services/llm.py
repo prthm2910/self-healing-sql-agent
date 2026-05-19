@@ -1,13 +1,13 @@
 import time
 
-from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 
 from src.utils.limiter import rate_limiter
 from src.core.config import settings
 from src.utils.logger import logger
 
-class LoggedChatOpenAI(ChatOpenAI):
-    """Wrapped ChatOpenAI provider with logging."""
+class LoggedChatGroq(ChatGroq):
+    """Wrapped ChatGroq provider with logging."""
     
     def invoke(self, input, config=None, **kwargs):
         
@@ -31,15 +31,13 @@ class LoggedChatOpenAI(ChatOpenAI):
             raise
 
 def get_llm():
-    """Factory to get the requested logged LLM provider."""
-    model = settings.model_name
-    api_key = settings.nvidia_api_key
-    base_url = settings.nim_base_url
+    """Factory to get the requested logged LLM provider (Groq)."""
+    model = "openai/gpt-oss-20b"
+    api_key = settings.groq_api_key
     
-    logger.debug(f"Instantiating LLM (model: {model}) at {base_url}")
-    return LoggedChatOpenAI(
+    logger.debug(f"Instantiating ChatGroq (model: {model})")
+    return LoggedChatGroq(
         model=model,
-        api_key=api_key,
-        base_url=base_url,
+        groq_api_key=api_key,
         temperature=0
     )
