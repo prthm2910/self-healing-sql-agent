@@ -3,26 +3,26 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 def get_sql_generation_prompt():
     """
     Prompt factory for the initial SQL generation step with Lessons.
+    Targets QueryBlueprint structured output.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a SQL expert for the 'Pagila' DVD rental database.
 
 ### SYSTEMIC LESSONS (PAST MISTAKES)
 {lessons}
-If you apply a lesson, explicitly state which one and why (briefly).
 
 DATABASE SCHEMA:
 {schema}
 
+### OBJECTIVE:
+Generate a structured 'QueryBlueprint' JSON object to answer the user's question.
+
 STRICT RULES:
-1. ONLY return the SQL query. Do NOT provide explanations.
-2. Answer ONLY the specific question asked. Do not include extra columns or data not requested.
-3. Use standard PostgreSQL syntax.
-4. Always limit results to a maximum of 50 unless requested otherwise.
-5. NO HALLUCINATIONS: Do not assume columns exist (e.g., 'name', 'country', 'total_amount') unless you see them in the SCHEMA.
-6. STRUCTURAL INTEGRITY: If you need to filter by 'country', you MUST join via 'address' -> 'city' -> 'country'.
-7. STRING MATCHING: Always use case-insensitive matching (ILIKE) for user-provided names or locations unless specified otherwise.
-8. If the question cannot be answered with the provided schema, say "I cannot find the relevant tables for this request."
+1. NO HALLUCINATIONS: Do not assume columns exist (e.g., 'name', 'country') unless they are in the SCHEMA.
+2. JOIN INTEGRITY: To filter by 'country', you MUST join via 'address' -> 'city' -> 'country'.
+3. STRING MATCHING: Use 'ILIKE' for case-insensitive matches.
+4. LIMIT: Default limit is 50.
+5. Provide your 'thought_process' explaining your logic.
 """),
         MessagesPlaceholder(variable_name="history"),
         ("human", "{question}")
@@ -31,10 +31,11 @@ STRICT RULES:
 def get_sql_healing_prompt():
     """
     Prompt factory for the self-healing step when a query fails.
+    Targets QueryBlueprint structured output.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a SQL debugging expert. 
-A previous SQL query failed. FIX it based on the error and schema.
+A previous SQL query failed. FIX it based on the error and schema by generating a new 'QueryBlueprint'.
 
 DATABASE SCHEMA:
 {schema}
@@ -42,9 +43,10 @@ DATABASE SCHEMA:
 FAILED QUERY: {failed_query}
 ERROR MESSAGE: {error_message}
 
-INSTRUCTIONS:
-- Provide a CORRECTED PostgreSQL query that answers ONLY the user's question.
-- ONLY return the SQL query. No explanation.
+STRICT RULES:
+1. Resolve the error using valid PostgreSQL logic.
+2. Output MUST be a structured 'QueryBlueprint' JSON.
+3. Provide your 'thought_process' explaining the fix.
 """),
         ("human", "Fix the query for: {question}")
     ])
@@ -54,8 +56,8 @@ def get_decomposer_prompt():
     Prompt factory for the Manager node to decompose queries.
     """
     return ChatPromptTemplate.from_messages([
-        ("system", """You are a SQL Strategy Manager for the Pagila (DVD Rental) database.
-Your goal is to decompose a complex natural language question into atomic sub-tasks (Logic Islands) AND a deterministic join plan.
+        ("system", """You are a SQL Strategy Manager for the DVD Rental database.
+Decompose the user question into atomic sub-tasks and a join plan.
 
 SKELETON SCHEMA (Tables & FKs):
 {skeleton_schema}
@@ -63,21 +65,13 @@ SKELETON SCHEMA (Tables & FKs):
 ### STRATEGY:
 1. Divide the question into 'Islands of Logic' (e.g., Filtering by Category vs Filtering by Actor).
 2. Each 'SubTask' must be atomic and include columns needed for the FINAL join.
-3. The 'JoinPlan' is MANDATORY. It must be a step-by-step blueprint to merge these islands.
+3. The 'JoinPlan' is a step-by-step blueprint to merge these islands.
 
 ### RULES:
 - Use 'inner' joins by default.
-- **JOIN KEY PROTECTION**: Ensure 'required_columns' includes the Join Key (e.g., 'film_id', 'customer_id').
-- **NO HALLUCINATIONS**: Do not assume columns exist on a table just because they are related. 
-  - Example: 'category' is NOT in the 'film' table. You MUST use 'film_category' and 'category' tables.
-  - Example: 'revenue' is calculated from the 'payment' or 'rental' tables.
-- Isolation: Each task should handle its own tables.
-- You MUST provide both 'sub_tasks' AND 'join_plan'. Do not skip the join_plan.
-
-### JOIN PLAN EXAMPLE:
-- base_task: "task_1"
-- steps: [{{"left": "task_1", "right": "task_2", "on": "film_id"}}]
-- final_select: "t1.title, t2.count"
+- JOIN KEY PROTECTION: Ensure 'required_columns' includes the Join Key (e.g., 'film_id', 'customer_id').
+- NO HALLUCINATIONS: only use tables/columns from the schema.
+- Provide your 'thought_process' explaining the decomposition.
 """),
         ("human", "{question}")
     ])
@@ -114,11 +108,13 @@ USER QUESTION: {question}
 SQL EXECUTED: {query}
 DATA SAMPLE: {data}
 
-STRICT INSTRUCTIONS:
-1. Provide a 'summary' that directly answers the user's question (e.g., "The top 10 most expensive films are...").
-2. BE CONCISE. Do not volunteer extra information, analysis, or "helpful" tips that weren't asked for.
-3. DO NOT include the SQL query in the 'summary'.
-4. Provide a concise response.
+### STRICT GROUNDEDNESS RULES:
+1. ONLY use the provided 'DATA SAMPLE' to answer the question.
+2. If 'DATA SAMPLE' is empty or '[]', you MUST state that no results were found for the criteria.
+3. NEVER invent names, counts, or statistics (e.g., actor names, rental counts) that are not present in the data.
+4. If the SQL query appears to have failed or returned zero results, do NOT try to be "helpful" by using your general knowledge of movies.
+5. Provide a 'summary' that directly answers the user's question (e.g., "The top 10 most expensive films are...").
+6. Provide your 'thought_process' explaining how you derived the answer from the data.
 """),
         ("human", "Summarize these results.")
     ])

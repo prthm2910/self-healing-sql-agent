@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from src.core.config import settings
 from src.ui.components import render_sidebar, save_thread_metadata
+from src.ui.transparency import render_transparency_log
 from src.utils.limiter import rate_limiter
 from src.workflow.builder import build_chatbot_graph
 from src.utils.logger import logger, log_context
@@ -32,6 +33,8 @@ if "is_thinking" not in st.session_state:
     st.session_state.is_thinking = False
 if "pending_prompt" not in st.session_state:
     st.session_state.pending_prompt = None
+if "agent_logs" not in st.session_state:
+    st.session_state.agent_logs = []
 
 # Update log context for UI thread
 log_context.set({
@@ -77,7 +80,10 @@ with chat_container:
             with st.chat_message("user"):
                 st.markdown(msg.content)
         elif isinstance(msg, AIMessage):
-            clean_content = msg.content.replace(settings.memory_tag, "").strip()
+            # Prioritize the full markdown (with tables) for UI display
+            # but keep msg.content (lean) for the actual conversation history
+            display_content = msg.additional_kwargs.get("full_markdown", msg.content)
+            clean_content = display_content.replace(settings.memory_tag, "").strip()
             if clean_content:
                 with st.chat_message("assistant"):
                     st.markdown(clean_content)
@@ -92,15 +98,14 @@ prompt = st.chat_input(
 if prompt:
     logger.info(f"User interaction: prompt received (len={len(prompt)})")
     # 1. Rate Limit Check (Shared Global Limit)
-    if rate_limiter.get_current_load() >= settings.rate_limit_rpm:
+    if rate_limiter.check_and_record():
+        # 2. Lock UI and capture prompt
+        st.session_state.is_thinking = True
+        st.session_state.pending_prompt = prompt
+        st.rerun()
+    else:
         logger.warning(f"Rate limit hit: {settings.rate_limit_rpm} RPM")
         st.error(f"⚠️ Rate limit reached ({settings.rate_limit_rpm} RPM). Please wait.")
-        st.stop()
-    
-    # 2. Lock UI and capture prompt
-    st.session_state.is_thinking = True
-    st.session_state.pending_prompt = prompt
-    st.rerun()
 
 # Phase 2: Processing the Pending Prompt
 if st.session_state.pending_prompt:
@@ -143,6 +148,9 @@ if st.session_state.pending_prompt:
 
                 # Get and display response
                 ai_msg = response["messages"][-1]
+                # DATA DIET: Refresh logs for the current turn only to keep UI fast
+                st.session_state.agent_logs = response.get("agent_logs", [])
+                
                 content = ai_msg.content
                 display_content = content.replace(settings.memory_tag, "").strip()
                 st.markdown(display_content)
@@ -156,3 +164,6 @@ if st.session_state.pending_prompt:
                 # 7. Unlock Input and Rerun to refresh the field
                 st.session_state.is_thinking = False
                 st.rerun()
+
+# --- Transparency Log (Developer Console) ---
+render_transparency_log(st.session_state.agent_logs)

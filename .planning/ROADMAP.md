@@ -37,7 +37,8 @@ A conversational AI application using Streamlit for the frontend, LangGraph for 
 - [ ] 05-02-PLAN.md - Service Expansion & Log Audit
 
 ## Phase 6 Plans
-**Plans:** 3 plans
+**Plans:** 4 plans
+- [ ] 06-00-SIMULATION-PLAN.md - Simulation of DAC Architecture
 - [ ] 06-01-PLAN.md - Foundation & SQLTranspiler
 - [ ] 06-02-PLAN.md - Manager & Worker Nodes
 - [ ] 06-03-PLAN.md - Assembler & Graph Orchestration

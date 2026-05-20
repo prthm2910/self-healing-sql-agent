@@ -25,6 +25,7 @@ class State(TypedDict):
 
     sql_error: str
     sql_results: list
+    sql_blueprint: Optional[Dict[str, Any]] # Structured logical tree
     is_aggregated: bool # True if results are a single value (1x1)
     retry_count: int
     # Clarification Lock fields
