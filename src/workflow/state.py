@@ -23,7 +23,7 @@ class State(TypedDict):
     # SQL Agent fields
     current_sql: str
 
-    sql_error: str
+    sql_error: Annotated[List[str], operator.add]
     sql_results: list
     sql_blueprint: Optional[Dict[str, Any]] # Structured logical tree
     is_aggregated: bool # True if results are a single value (1x1)

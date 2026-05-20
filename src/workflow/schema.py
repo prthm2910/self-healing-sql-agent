@@ -5,7 +5,7 @@ class BaseNodeOutput(BaseModel):
     """
     Base class for all node outputs to ensure deterministic observability.
     """
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
     node_name: str = "unknown"
     thought_process: str = Field(
         ..., 
@@ -17,14 +17,14 @@ class BaseNodeOutput(BaseModel):
 
 class SQLFilter(BaseModel):
     """Structured WHERE condition."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     field: str = Field(..., description="Column name (with table alias if necessary).")
     operator: Literal["=", "!=", ">", "<", ">=", "<=", "LIKE", "ILIKE", "IN", "IS NULL"]
     value: Any = Field(..., description="The literal value, list of values, or NULL.")
 
 class SQLSelection(BaseModel):
     """Structured SELECT field."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     column: str = Field(..., description="Column name or '*'")
     aggregation: Optional[Literal["COUNT", "SUM", "AVG", "MIN", "MAX"]] = None
     alias: Optional[str] = None
@@ -34,10 +34,12 @@ class QueryBlueprint(BaseNodeOutput):
     task_id: int = Field(default=1)
     tables: List[str] = Field(..., description="List of tables involved.")
     select: List[SQLSelection] = Field(..., description="Columns/aggregations to select.")
-    filters: List[SQLFilter] = Field(default_factory=list, description="List of logical filters.")
-    group_by: List[str] = Field(default_factory=list, description="List of columns for grouping.")
-    order_by: List[Dict[str, Literal["ASC", "DESC"]]] = Field(default_factory=list)
+    filters: Optional[List[SQLFilter]] = Field(default_factory=list, description="List of logical filters.")
+    group_by: Optional[List[str]] = Field(default_factory=list, description="List of columns for grouping.")
+    order_by: Optional[List[Dict[str, Literal["ASC", "DESC"]]]] = Field(default_factory=list)
     limit: Optional[int] = None
+    # Fallback field for when model ignores the blueprint and writes SQL anyway
+    sql: Optional[str] = Field(None, description="Direct SQL query (Fallback).")
 
 class SQLResultSet(BaseModel):
     """Structured envelope for database output."""
@@ -46,6 +48,14 @@ class SQLResultSet(BaseModel):
     row_count: int
     status: Literal["success", "error"]
     error_message: Optional[str] = None
+
+class AnchorSelection(BaseNodeOutput):
+    """Structured output for identifying anchor tables."""
+    anchors: List[str] = Field(..., description="List of relevant anchor tables.")
+
+class ClarificationOutput(BaseNodeOutput):
+    """Structured output for generating clarification questions."""
+    clarification_question: str = Field(..., description="The concise follow-up question for the user.")
 
 # --- GUARDIAN TIER ---
 
@@ -73,13 +83,13 @@ class ClassifierNodeOutput(ClassifierLLMOutput):
 
 class ColumnSelection(BaseModel):
     """Mapping of table names to relevant columns."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     table_name: str = Field(..., description="Physical table name.")
     columns: List[str] = Field(..., description="List of column names.")
 
 class FKRelationship(BaseModel):
     """Explicit foreign key connection."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     source_table: str = Field(..., description="Source table.")
     source_column: str = Field(..., description="Source column.")
     target_table: str = Field(..., description="Target table.")
@@ -100,24 +110,24 @@ class SchemaSelectorNodeOutput(SchemaSelectorLLMOutput):
 
 class SubTask(BaseModel):
     """An atomic unit of work for a Worker node."""
-    model_config = ConfigDict(extra="forbid")
-    task_id: str = Field(..., description="Unique ID for the sub-task (e.g., 'task_1').")
-    description: str = Field(..., description="Description of what this sub-task generates.")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    task_id: str = Field(..., validation_alias=AliasChoices("task_id", "id", "task"), description="Unique ID for the sub-task (e.g., 'task_1').")
+    description: str = Field(..., validation_alias=AliasChoices("description", "name", "goal"), description="Description of what this sub-task generates.")
     tables: List[str] = Field(..., description="Tables involved in this specific snippet.")
     required_columns: List[str] = Field(..., description="Columns that MUST be in the SELECT list for joins.")
-    dependencies: List[str] = Field(..., description="IDs of tasks this task depends on.")
+    dependencies: List[str] = Field(default_factory=list, description="IDs of tasks this task depends on.")
 
 class JoinStep(BaseModel):
     """A single join operation between two sub-task snippets."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
     left: str = Field(..., description="Task ID of the left side (or 'base').")
     right: str = Field(..., description="Task ID of the right side snippet.")
     on: str = Field(..., description="The column name to join on (assumed same in both).")
-    join_type: str = Field(..., description="inner, left, or cross.")
+    join_type: str = Field(default="inner", validation_alias=AliasChoices("join_type", "type"), description="inner, left, or cross.")
 
 class JoinPlan(BaseModel):
     """The blueprint for assembling multiple SQL snippets."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     base_task: str = Field(..., description="The ID of the primary task to start the FROM clause.")
     steps: List[JoinStep] = Field(..., description="Ordered steps to join additional snippets.")
     final_select: str = Field(..., description="The final columns to select from the joined set.")
@@ -132,13 +142,13 @@ class DecomposerOutput(BaseNodeOutput):
 
 class SQLExample(BaseModel):
     """Deep structure for code comparisons."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     original_error: str = Field(..., description="The exact SQL query that failed.")
     fixed_sql: str = Field(..., description="The corrected, working SQL query.")
 
 class LessonBody(BaseModel):
     """The core content of the Staff Engineer lesson."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     instruction: str = Field(..., description="The single, actionable rule for future agents.")
     mistake: str = Field(..., description="A clear description of the specific error made.")
     reasoning: str = Field(..., description="Markdown Root Cause Analysis and Future Proofing.")

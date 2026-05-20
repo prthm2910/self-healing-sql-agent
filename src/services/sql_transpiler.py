@@ -13,6 +13,8 @@ class SQLTranspiler:
     @staticmethod
     def _parse_column(col_str: str) -> exp.Column:
         """Helper to parse 'table.column' into a SQLGlot Column object."""
+        if col_str == "*":
+            return exp.Star()
         if "." in col_str:
             parts = col_str.split(".")
             return exp.column(parts[1], table=parts[0])
@@ -23,6 +25,13 @@ class SQLTranspiler:
         """
         Converts the logical blueprint tree into a SQL string.
         """
+        # --- FALLBACK: Direct SQL ---
+        if hasattr(blueprint, "sql") and blueprint.sql:
+            logger.info("Using direct SQL fallback from blueprint.")
+            # Remove any markdown wrappers if model hallucinated them into the field
+            sql = blueprint.sql.strip().replace("```sql", "").replace("```", "").rstrip(";")
+            return sql
+
         logger.info(f"Transpiling QueryBlueprint for task {blueprint.task_id} to {dialect}")
         
         try:
@@ -62,7 +71,7 @@ class SQLTranspiler:
                     query = query.join(table, join_type="INNER")
             
             # 3. WHERE
-            for f in blueprint.filters:
+            for f in (blueprint.filters or []):
                 col_expr = SQLTranspiler._parse_column(f.field)
                 
                 op_map = {
@@ -115,3 +124,52 @@ class SQLTranspiler:
         except Exception as e:
             logger.error(f"SQL Transpilation Failed: {e}", exc_info=True)
             raise ValueError(f"Could not transpile QueryBlueprint: {e}")
+
+    @staticmethod
+    def merge_snippets(snippets: dict[str, str], join_plan: dict[str, Any]) -> str:
+        """
+        Stitches multiple SQL snippets (CTEs) into a single valid PostgreSQL query.
+        """
+        logger.info(f"Assembling SQL snippets using Join Plan: {join_plan.get('base_task')}")
+        
+        # 1. Initialize the base query
+        base_task_id = join_plan.get("base_task")
+        if not base_task_id or base_task_id not in snippets:
+            raise ValueError(f"Base task ID '{base_task_id}' not found in provided snippets.")
+            
+        final_select = join_plan.get("final_select", "*")
+        
+        # SQLGlot select() needs individual expressions. If it's a string with commas, we split it.
+        if isinstance(final_select, str) and "," in final_select:
+            select_exprs = [s.strip() for s in final_select.split(",")]
+        else:
+            select_exprs = [final_select] if isinstance(final_select, str) else final_select
+
+        final_query = sqlglot.select(*select_exprs).from_(base_task_id)
+        
+        # 2. Add Join Steps
+        for step in join_plan.get("steps", []):
+            left = step.get("left")
+            right = step.get("right")
+            on_col = step.get("on")
+            jtype = step.get("join_type", "inner")
+            
+            # Construct join condition: left.col = right.col
+            join_cond = f"{left}.{on_col} = {right}.{on_col}"
+            
+            if jtype == "left":
+                final_query = final_query.join(right, on=join_cond, join_type="LEFT")
+            elif jtype == "cross":
+                final_query = final_query.join(right, join_type="CROSS")
+            else:
+                final_query = final_query.join(right, on=join_cond)
+
+        # 3. Inject Snippets as CTEs (Deterministic isolation)
+        for task_id, raw_sql in snippets.items():
+            # Clean up the raw SQL (remove trailing semicolons if any)
+            clean_sql = raw_sql.strip().rstrip(";")
+            
+            # Use SQLGlot to wrap the snippet as a CTE
+            final_query = final_query.with_(task_id, as_=sqlglot.parse_one(clean_sql, read="postgres"))
+            
+        return final_query.sql(dialect="postgres", pretty=True)

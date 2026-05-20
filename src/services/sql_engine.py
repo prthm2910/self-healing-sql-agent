@@ -98,16 +98,18 @@ class SQLEngine:
     def get_bridge_tables(self, anchors: List[str]) -> List[str]:
         """
         Finds bridge tables needed to connect anchor tables using BFS.
+        Connects all pairs to ensure a fully connected schema subgraph.
         """
         if len(anchors) < 2:
             return []
             
         bridges = set()
-        start_node = anchors[0]
-        for target in anchors[1:]:
-            path = self._find_shortest_path(start_node, target)
-            if path:
-                bridges.update(path)
+        # Connect all anchors to each other to ensure no islands
+        for i in range(len(anchors)):
+            for j in range(i + 1, len(anchors)):
+                path = self._find_shortest_path(anchors[i], anchors[j])
+                if path:
+                    bridges.update(path)
         
         return list(bridges - set(anchors))
 
@@ -171,9 +173,16 @@ class SQLEngine:
         try:
             pool = self._get_pool()
             with pool.connection() as conn:
-                results = conn.execute(query).fetchall()
+                cur = conn.execute(query)
+                results = cur.fetchall()
+                columns = [desc[0] for desc in cur.description] if cur.description else []
                 logger.info(f"Query successful. Rows returned: {len(results)}")
-                return {"status": "success", "data": results, "row_count": len(results)}
+                return {
+                    "status": "success", 
+                    "rows": results, 
+                    "columns": columns,
+                    "row_count": len(results)
+                }
         except Exception as e:
             logger.error(f"SQL Execution Failed. Error: {str(e)}")
             return {"status": "error", "error_message": str(e), "query": query}
@@ -310,65 +319,3 @@ sql_engine = SQLEngine()
 
 # Register for graceful shutdown
 atexit.register(sql_engine.close)
-
-class SQLTranspiler:
-    """
-    Deterministic SQL Assembler using SQLGlot AST manipulation.
-    Handles 'Divide & Conquer' query merging with CTEs and isolated joins.
-    """
-    
-    @staticmethod
-    def merge_snippets(snippets: Dict[str, str], join_plan: Dict[str, Any]) -> str:
-        """
-        Stitches multiple SQL snippets (CTEs) into a single valid PostgreSQL query.
-        
-        Args:
-            snippets: Dict of {task_id: raw_sql}
-            join_plan: Dict containing 'base_task', 'steps' (list of JoinStep), and 'final_select'.
-            
-        Returns:
-            The compiled final SQL string.
-        """
-        logger.info(f"Assembling SQL snippets using Join Plan: {join_plan.get('base_task')}")
-        
-        # 1. Initialize the base query
-        base_task_id = join_plan.get("base_task")
-        if not base_task_id or base_task_id not in snippets:
-            raise ValueError(f"Base task ID '{base_task_id}' not found in provided snippets.")
-            
-        final_select = join_plan.get("final_select", "*")
-        
-        # SQLGlot select() needs individual expressions. If it's a string with commas, we split it.
-        if isinstance(final_select, str) and "," in final_select:
-            select_exprs = [s.strip() for s in final_select.split(",")]
-        else:
-            select_exprs = [final_select] if isinstance(final_select, str) else final_select
-
-        final_query = sqlglot.select(*select_exprs).from_(base_task_id)
-        
-        # 2. Add Join Steps
-        for step in join_plan.get("steps", []):
-            left = step.get("left")
-            right = step.get("right")
-            on_col = step.get("on")
-            jtype = step.get("join_type", "inner")
-            
-            # Construct join condition: left.col = right.col
-            join_cond = f"{left}.{on_col} = {right}.{on_col}"
-            
-            if jtype == "left":
-                final_query = final_query.join(right, on=join_cond, join_type="LEFT")
-            elif jtype == "cross":
-                final_query = final_query.join(right, join_type="CROSS")
-            else:
-                final_query = final_query.join(right, on=join_cond)
-
-        # 3. Inject Snippets as CTEs (Deterministic isolation)
-        for task_id, raw_sql in snippets.items():
-            # Clean up the raw SQL (remove trailing semicolons if any)
-            clean_sql = raw_sql.strip().rstrip(";")
-            
-            # Use SQLGlot to wrap the snippet as a CTE
-            final_query = final_query.with_(task_id, as_=parse_one(clean_sql, read="postgres"))
-            
-        return final_query.sql(dialect="postgres", pretty=True)

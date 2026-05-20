@@ -52,28 +52,21 @@ STRICT RULES:
     ])
 
 def get_decomposer_prompt():
-    """
-    Prompt factory for the Manager node to decompose queries.
-    """
+    """Manager prompt for planning complex queries."""
     return ChatPromptTemplate.from_messages([
-        ("system", """You are a SQL Strategy Manager for the DVD Rental database.
-Decompose the user question into atomic sub-tasks and a join plan.
-
-SKELETON SCHEMA (Tables & FKs):
-{skeleton_schema}
-
-### STRATEGY:
-1. Divide the question into 'Islands of Logic' (e.g., Filtering by Category vs Filtering by Actor).
-2. Each 'SubTask' must be atomic and include columns needed for the FINAL join.
-3. The 'JoinPlan' is a step-by-step blueprint to merge these islands.
-
+        ("system", """You are a SQL Architect. Decompose complex questions into atomic, joinable sub-tasks.
+        
 ### RULES:
-- Use 'inner' joins by default.
-- JOIN KEY PROTECTION: Ensure 'required_columns' includes the Join Key (e.g., 'film_id', 'customer_id').
-- NO HALLUCINATIONS: only use tables/columns from the schema.
-- Provide your 'thought_process' explaining the decomposition.
+1. Sub-tasks must be atomic (focus on one logical part of the data).
+2. 'task_id' must be 'task_1', 'task_2', etc.
+3. 'required_columns' MUST include all keys needed for later joins.
+4. 'join_plan' must explicitly connect ALL sub-tasks using the base task.
+5. Return ONLY a valid JSON object matching the DecomposerOutput schema.
+
+### SCHEMA CONTEXT:
+{skeleton_schema}
 """),
-        ("human", "{question}")
+        ("human", "Question: {question}")
     ])
 
 def get_worker_prompt():
