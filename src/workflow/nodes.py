@@ -730,7 +730,9 @@ def assembler_node(state: State):
 
 def format_sql_response_node(state: State, config: RunnableConfig):
     """
-    Ultra-low latency renderer using Flash (8B) for summaries and Python for tables.
+    Ultra-low latency hybrid renderer: 
+    - Pure Python template + tables for non-aggregated queries (zero LLM overhead).
+    - LLM-based summaries for aggregated queries.
     """
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id", settings.default_user_id)
