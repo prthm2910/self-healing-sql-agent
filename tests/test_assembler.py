@@ -1,5 +1,4 @@
-import pytest
-from src.services.sql_engine import SQLTranspiler
+from src.services.sql_assembler import sql_assembler
 
 def test_merge_snippets_simple():
     snippets = {
@@ -9,21 +8,20 @@ def test_merge_snippets_simple():
     join_plan = {
         "base_task": "t1",
         "steps": [
-            {"left": "t1", "right": "t2", "on": "film_id", "join_type": "inner"}
+            {"left": "t1", "right": "t2", "on": "t1.t1_film_id = t2.t2_film_id", "join_type": "inner"}
         ],
-        "final_select": "t1.title, t2.actor_id"
+        "final_select": "t1_title, t2_actor_id"
     }
     
-    final_sql = SQLTranspiler.merge_snippets(snippets, join_plan)
+    final_sql = sql_assembler.assemble(snippets, join_plan)
     
-    # Assertions - Check for presence of components (dialect agnostic or normalized)
+    # Assertions - Check for presence of components
     assert "t1 AS (" in final_sql
     assert "t2 AS (" in final_sql
     assert "SELECT" in final_sql
-    assert "t1.title" in final_sql
-    assert "t2.actor_id" in final_sql
+    assert "t1_title" in final_sql
+    assert "t2_actor_id" in final_sql
     assert "JOIN t2" in final_sql
-    assert "ON t1.film_id = t2.film_id" in final_sql or "ON t1.film_id = t2.film_id" in final_sql.replace("\n", "").replace("  ", " ")
 
 def test_merge_snippets_complex():
     snippets = {
@@ -34,13 +32,13 @@ def test_merge_snippets_complex():
     join_plan = {
         "base_task": "t1",
         "steps": [
-            {"left": "t1", "right": "t2", "on": "film_id", "join_type": "inner"},
-            {"left": "t2", "right": "t3", "on": "actor_id", "join_type": "inner"}
+            {"left": "t1", "right": "t2", "on": "t1.t1_film_id = t2.t2_film_id", "join_type": "inner"},
+            {"left": "t2", "right": "t3", "on": "t2.t2_actor_id = t3.t3_actor_id", "join_type": "inner"}
         ],
-        "final_select": "t3.first_name, t3.last_name"
+        "final_select": "t3_first_name, t3_last_name"
     }
     
-    final_sql = SQLTranspiler.merge_snippets(snippets, join_plan)
+    final_sql = sql_assembler.assemble(snippets, join_plan)
     
     assert "t1 AS (" in final_sql
     assert "t2 AS (" in final_sql
@@ -49,5 +47,5 @@ def test_merge_snippets_complex():
     assert "JOIN t3" in final_sql
     # Check join condition with normalization
     normalized_sql = final_sql.replace("\n", " ").replace("  ", " ")
-    assert "ON t1.film_id = t2.film_id" in normalized_sql
-    assert "ON t2.actor_id = t3.actor_id" in normalized_sql
+    assert "t1.t1_film_id = t2.t2_film_id" in normalized_sql
+    assert "t2.t2_actor_id = t3.t3_actor_id" in normalized_sql

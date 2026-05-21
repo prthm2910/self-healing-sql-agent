@@ -10,7 +10,9 @@ class LoggedEmbeddings(GoogleGenerativeAIEmbeddings):
         logger.info(f"Generating embeddings for {len(texts)} documents...")
         start_time = time.time()
         try:
-            result = super().embed_documents(texts)
+            # Workaround for langchain-google-genai batching bug where embed_documents
+            # incorrectly returns only a single embedding for the whole batch
+            result = [super().embed_query(text) for text in texts]
             duration = time.time() - start_time
             logger.info(f"Generated {len(texts)} embeddings in {duration:.2f}s")
             return result
