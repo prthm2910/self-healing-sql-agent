@@ -41,6 +41,76 @@ from src.workflow.schema import (
 # Initialize single 8B model for ALL tasks
 llm = get_llm()
 
+def robust_invoke(chain, input, schema_class, max_retries=2):
+    """
+    Invokes a structured output chain with a fallback to manual JSON parsing if Groq's 
+    'Tool choice is required' error occurs.
+    """
+    import json
+    import re
+    from langchain_core.runnables import RunnableSequence
+    
+    # 1. Try standard structured output
+    try:
+        return chain.invoke(input)
+    except Exception as e:
+        error_str = str(e).lower()
+        # Log the specific failure for transparency
+        if "400" in error_str and ("tool choice" in error_str or "tool_use_failed" in error_str):
+            logger.warning(f"Structured output failed for {schema_class.__name__} (Attempt 1). Attempting robust fallback...")
+        else:
+            raise e # Not a tool failure, propagate original error
+
+    # 2. Manual Fallback: Ask for raw JSON and parse it
+    # We use the underlying LLM to avoid tool_choice=required
+    raw_llm = llm # The global LoggedChatGroq instance
+    
+    # Resolve the prompt text from the chain and input
+    prompt_text = ""
+    try:
+        if isinstance(chain, RunnableSequence):
+            # Attempt to get the prompt by running the first part of the chain (the template)
+            prompt_val = chain.first.invoke(input)
+            prompt_text = prompt_val.to_string() if hasattr(prompt_val, "to_string") else str(prompt_val)
+        elif isinstance(input, list):
+            prompt_text = "\n".join([m.content for m in input if hasattr(m, 'content')])
+        else:
+            prompt_text = str(input)
+    except Exception as p_err:
+        logger.error(f"Failed to resolve prompt text for fallback: {p_err}")
+        prompt_text = str(input)
+        
+    fallback_prompt = f"""{prompt_text}
+
+### OUTPUT INSTRUCTIONS:
+You MUST output ONLY a valid JSON object matching this schema:
+{schema_class.model_json_schema()}
+
+Ensure the output is a single valid JSON block enclosed in ```json ... ```.
+"""
+    
+    for attempt in range(max_retries):
+        try:
+            res = raw_llm.invoke(fallback_prompt)
+            content = res.content
+            
+            # Extract JSON from code blocks
+            json_match = re.search(r"```json\s*(.*?)\s*```", content, re.DOTALL)
+            json_str = json_match.group(1) if json_match else content
+            
+            # Remove any trailing commas or markdown artifacts
+            json_str = re.sub(r',\s*}', '}', json_str)
+            json_str = re.sub(r',\s*]', ']', json_str)
+            
+            # Parse and validate with Pydantic
+            parsed = json.loads(json_str)
+            return schema_class(**parsed)
+        except Exception as retry_err:
+            logger.error(f"Fallback attempt {attempt+1} failed for {schema_class.__name__}: {retry_err}")
+            if attempt == max_retries - 1:
+                raise RuntimeError(f"Failed to get valid structured output for {schema_class.__name__} after fallback attempts.") from retry_err
+            time.sleep(1)
+
 def decomposer_node(state: State, config: RunnableConfig):
     """
     The Manager Node: Decomposes complex queries into atomic sub-tasks and a Join Plan.
@@ -57,17 +127,17 @@ def decomposer_node(state: State, config: RunnableConfig):
         selected_tables = state.get("selected_tables", [])
         fk_relationships = state.get("fk_relationships", [])
         
-        # Build detailed Skeleton Schema (Table names + Columns) to prevent hallucinations
-        full_schema_obj = sql_engine.get_schema_object(selected_tables)
-        skeleton_schema = f"Tables & Columns: {full_schema_obj}\nRelationships: {fk_relationships}"
+        # Build LIGHT Skeleton Schema (Table names only) to save tokens
+        # Manager only needs to know which tables exist, not every column yet.
+        skeleton_schema = f"Available Tables: {selected_tables}\nRelationships: {fk_relationships}"
         
         prompt_template = get_decomposer_prompt()
         # Manager uses 8B Flash for high-speed planning.
         chain = prompt_template | llm.with_structured_output(DecomposerOutput)
-        res = chain.invoke({
+        res = robust_invoke(chain, {
             "skeleton_schema": skeleton_schema,
             "question": user_question
-        })
+        }, DecomposerOutput)
         res.node_name = "decomposer"
         
         # --- DETERMINISTIC JOIN KEY INJECTION ---
@@ -126,10 +196,10 @@ def call_chatbot(state: State, config: RunnableConfig, store=None):
         
         logger.info(f"Chatbot Node | Lessons: {len(applied_titles)} {applied_titles if applied_titles else ''}")
         
-        res = chain.invoke({
+        res = robust_invoke(chain, {
             "lessons": lessons_text,
             "messages": current_chat_history
-        })
+        }, ChatbotResponse)
 
         # Internal Validation -> Export to Dict
         res.node_name = "call_chatbot"
@@ -197,7 +267,7 @@ User Message: "{last_msg}"
 """
         # Use structured output for determinism
         chain = llm.with_structured_output(GuardianOutput)
-        res = chain.invoke([SystemMessage(content=decision_prompt)])
+        res = robust_invoke(chain, [SystemMessage(content=decision_prompt)], GuardianOutput)
         res.node_name = "guardian"
         
         logger.info(f"Guardian Action: {res.intent} | Context Locked: {is_locked} | Thought: {res.thought_process}")
@@ -287,7 +357,7 @@ def clarify_node(state: State, config: RunnableConfig):
     # Use structured output
     chain = llm.with_structured_output(ClarificationOutput)
     prompt = f"The user asked: '{state['messages'][-1].content}'. This is too vague for a SQL query. Ask a concise follow-up question to clarify what they want to see from the DVD rental database. Output MUST be valid JSON with key: 'clarification_question'."
-    res = chain.invoke(prompt)
+    res = robust_invoke(chain, prompt, ClarificationOutput)
     
     return {"messages": [AIMessage(content=res.clarification_question)]}
 
@@ -372,7 +442,7 @@ Relationships:
 2. Retain columns needed for filters (WHERE), ordering (ORDER BY), and display (SELECT).
 """
         chain = llm.with_structured_output(SchemaSelectorOutput)
-        res = chain.invoke([SystemMessage(content=pruning_prompt)])
+        res = robust_invoke(chain, [SystemMessage(content=pruning_prompt)], SchemaSelectorOutput)
         res.node_name = "column_pruner"
         
         # Convert List[ColumnSelection] to Dict[str, List[str]] for state compatibility
