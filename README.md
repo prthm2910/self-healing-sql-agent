@@ -187,7 +187,7 @@ graph TD
 
 Naive `Text-to-SQL` agents catastrophically collapse under heavy joins due to hallucinated relationship keys, schema token bloat, or column naming collisions. This section provides a concrete, step-by-step trace of how our **Divide & Conquer (Map-Reduce) AST Architecture** successfully processes an enterprise-grade benchmark.
 
-### 🎯 The Challenge Query (`scripts/stress_test_dac.py`):
+### 🎯 The Challenge Query:
 > *"List the top 3 actors whose films have generated the most revenue from customers living in cities that start with the letter 'A', but only for 'Sci-Fi' films."*
 
 ---
