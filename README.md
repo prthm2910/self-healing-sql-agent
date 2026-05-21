@@ -29,6 +29,30 @@ Below is an engineering evaluation comparing a standard, prompt-only agent again
 
 ---
 
+### 🔬 Benchmark Methodology & Verification Framework
+
+To guarantee the validity and replicability of these benchmark metrics, evaluations are conducted using a transparent, standardized testing framework:
+
+#### 1. Target Database & Test Dataset
+* **Database Schema:** The standard classic **Pagila** DVD Rental relational schema (comprising 15 highly interconnected tables with deep foreign key constraints).
+* **Test Suites:** A structured evaluation set of 50 functional natural language queries divided into three complexity tiers:
+  * **Simple (Tier 1):** Single-table selections, projections, and direct filters (e.g., *"List the first 10 actors"*).
+  * **Medium (Tier 2):** Queries requiring 2–4 joins with standard primary/foreign key mappings (e.g., *"Show action films rented by customer Mary Smith"*).
+  * **Complex / Marathon (Tier 3):** High-dimensional analytical requests requiring 6+ table joins, aggregation functions (`SUM`, `AVG`), sliding-window logic, and nested sorting rules.
+
+#### 2. Experimental Setup & Model Baseline
+* **Comparison Baseline:** A single-shot "Naive" Text-to-SQL agent with the entire database schema dumped into its system prompt.
+* **LLM Engine:** Groq platform running `llama3-70b-8192` (representing typical open-weights commercial speeds).
+* **Semantic Embeddings:** Google Generative AI `models/gemini-embedding-2` for 1536-dimensional cosine-similarity lookup indexes.
+* **Observability:** 100% of inputs, tokens, and trace paths are mapped and recorded in real-time via the **LangSmith API**.
+
+#### 3. Verification Protocol
+* **Context Token Cost:** Exact token tracking logged dynamically via the API provider's usage tokens per transaction.
+* **Execution Validation:** Generated SQL is executed directly against an active PostgreSQL instance. A query is marked as a **Success** if and only if it executes without throwing an engine exception AND returns the exact, mathematically correct records for the target question.
+* **Self-Healing Limit:** Debugging loops are capped at a maximum of 3 retries. Distilled lessons are only synthesized and written to the pgvector store on successful recovery.
+
+---
+
 ## 🗺️ System Cognitive Architecture
 
 The agent executes queries through a stateful workflow, branching based on prompt complexity and correcting itself through feedback loops.
