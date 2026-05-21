@@ -1,68 +1,15 @@
-import sys
 import time
 from typing import Dict, Any
 
 from langchain_core.runnables import RunnableConfig
 
 from src.core.config import settings
-from src.utils.logger import log_context
+from src.services.llm import get_llm
+from src.utils.logger import log_context, logger
 from src.workflow.state import State
 
+llm = get_llm()
 
-class LoggerProxy:
-    @property
-    def _logger(self):
-        nodes_mod = sys.modules.get("src.workflow.nodes")
-        if nodes_mod and hasattr(nodes_mod, "logger"):
-            val = nodes_mod.logger
-            if val is not self:
-                return val
-        from src.utils.logger import logger as real_logger
-        return real_logger
-
-    def info(self, msg, *args, **kwargs):
-        return self._logger.info(msg, *args, **kwargs)
-
-    def warning(self, msg, *args, **kwargs):
-        return self._logger.warning(msg, *args, **kwargs)
-
-    def error(self, msg, *args, **kwargs):
-        return self._logger.error(msg, *args, **kwargs)
-
-    def debug(self, msg, *args, **kwargs):
-        return self._logger.debug(msg, *args, **kwargs)
-
-    def critical(self, msg, *args, **kwargs):
-        return self._logger.critical(msg, *args, **kwargs)
-
-    def exception(self, msg, *args, **kwargs):
-        return self._logger.exception(msg, *args, **kwargs)
-
-logger = LoggerProxy()
-
-
-class LLMProxy:
-    @property
-    def _llm(self):
-        nodes_mod = sys.modules.get("src.workflow.nodes")
-        if nodes_mod and hasattr(nodes_mod, "get_llm"):
-            func = nodes_mod.get_llm
-            from src.services.llm import get_llm as real_get_llm
-            if func is not real_get_llm:
-                return func()
-        from src.services.llm import get_llm
-        return get_llm()
-
-    def with_structured_output(self, *args, **kwargs):
-        return self._llm.with_structured_output(*args, **kwargs)
-
-    def invoke(self, *args, **kwargs):
-        return self._llm.invoke(*args, **kwargs)
-
-    def bind(self, *args, **kwargs):
-        return self._llm.bind(*args, **kwargs)
-
-llm = LLMProxy()
 
 class BaseNode:
     """
