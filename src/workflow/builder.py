@@ -1,24 +1,16 @@
 from typing import Literal, List, Dict, Any
+
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.store.postgres import PostgresStore
 
 from src.workflow.state import State
-from src.workflow.nodes import (
-    guardian_node,
-    classifier_node,
-    clarify_node,
-    anchor_selector_node,
-    column_pruner_node,
-    decomposer_node,
-    worker_node,
-    assembler_node,
-    generate_sql_node, 
-    execute_sql_node, 
-    heal_sql_node, 
-    format_sql_response_node
-)
+from src.workflow.nodes.guardian import guardian_node, clarify_node
+from src.workflow.nodes.discovery import classifier_node, anchor_selector_node, column_pruner_node
+from src.workflow.nodes.complex_path import decomposer_node, worker_node, assembler_node
+from src.workflow.nodes.simple_path import generate_sql_node, execute_sql_node, heal_sql_node
+from src.workflow.nodes.response import format_sql_response_node
 from src.services.database import get_connection_pool
 from src.services.embeddings import get_embeddings_provider
 from src.core.config import settings
