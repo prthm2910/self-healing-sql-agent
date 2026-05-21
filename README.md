@@ -162,8 +162,8 @@ sequenceDiagram
 #### Node 1: Classification & Context Reduction
 * **Intent Analysis:** The `ClassifierNode` triggers the `COMPLEX` workflow path due to multiple analytical criteria (category, city prefix, aggregation).
 * **BFS Schema Graph Traversal:** The `AnchorSelectorNode` discovers the 11-table relationship path needed to connect `actor` to `city` via customer payments:
-  $$\text{actor} \leftrightarrow \text{film\_actor} \leftrightarrow \text{film} \leftrightarrow \text{film\_category} \leftrightarrow \text{category}$$
-  $$\text{film} \leftrightarrow \text{inventory} \leftrightarrow \text{rental} \leftrightarrow \text{payment} \leftrightarrow \text{customer} \leftrightarrow \text{address} \leftrightarrow \text{city}$$
+  * `actor` ↔ `film_actor` ↔ `film` ↔ `film_category` ↔ `category`
+  * `film` ↔ `inventory` ↔ `rental` ↔ `payment` ↔ `customer` ↔ `address` ↔ `city`
 * **Surgical Column Pruning:** The `ColumnPrunerNode` strips out unnecessary fields (like addresses, updates, descriptions), keeping only search filters and foreign keys. This dynamically compresses the prompt context from **~15,000 to ~2,000 tokens** (~85% savings).
 
 #### Node 2: Manager (Decomposer) Task Generation
@@ -271,7 +271,7 @@ JOIN payment p ON r.rental_id = p.rental_id
 When the snippets arrive at the `AssemblerNode`, the `SQLAssembler` performs AST manipulation instead of simple string concatenation:
 
 1. **Unique Table Aliasing:** To prevent duplicate column names and namespace clashes in the database, the AST automatically prefixes every projected column in the CTE with its corresponding task ID (`{island_id}_{column_name}`).
-   * *Example:* `first_name` $\rightarrow$ `t2_first_name`, `amount` $\rightarrow$ `t3_amount`.
+   * *Example:* `first_name` → `t2_first_name`, `amount` → `t3_amount`.
 2. **Missing Join Key Injection:** The assembler parses the `join_plan` and discovers that `t1` joins with `t3` on `film_id`, and `t2` joins with `t3` on `customer_id`. The AST engine checks `t3` and ensures that `film_id` and `customer_id` are explicitly projected inside `t3`. If a worker had omitted them, the AST would surgically inject them.
 3. **GROUP BY Safety Preservation:** If the assembler injects a key into an aggregate query (e.g. `t3`), it automatically appends the injected key to the query's `GROUP BY` clause. This prevents classic `PostgreSQL` errors where non-aggregated columns must appear in the group list.
 
