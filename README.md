@@ -8,7 +8,7 @@
 
 An autonomous, self-correcting SQL generation agent built with **LangGraph**, **SQLGlot AST**, and **PostgreSQL (pgvector)**. 
 
-Moving beyond brittle, prompt-only "Text-to-SQL" wrappers, this production-grade architecture enforces deterministic syntax safety, dynamic graph schema discovery, parallelized map-reduce query generation, and a persistent semantic memory loop that automatically distills lessons from execution failures.
+Moving beyond brittle, prompt-only "Text-to-SQL" wrappers, this architecture enforces deterministic syntax safety, dynamic graph schema discovery, parallelized map-reduce query generation, and a persistent semantic memory loop that automatically distills lessons from execution failures.
 
 ---
 
