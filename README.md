@@ -69,6 +69,45 @@ graph TD
 
 ---
 
+## 📊 Relational Database Architecture (Pagila Schema)
+
+The benchmark and test scripts target the classic Pagila schema, which serves as a realistic corporate transactional database:
+
+```mermaid
+erDiagram
+    ACTOR ||--o{ FILM_ACTOR : "plays_in (actor_id)"
+    FILM ||--o{ FILM_ACTOR : "features (film_id)"
+    
+    CATEGORY ||--o{ FILM_CATEGORY : "groups (category_id)"
+    FILM ||--o{ FILM_CATEGORY : "categorized_as (film_id)"
+    
+    LANGUAGE ||--o{ FILM : "spoken_in (language_id)"
+    
+    FILM ||--o{ INVENTORY : "stocked_as (film_id)"
+    STORE ||--o{ INVENTORY : "holds (store_id)"
+
+    INVENTORY ||--o{ RENTAL : "rented_out (inventory_id)"
+    CUSTOMER ||--o{ RENTAL : "makes (customer_id)"
+    STAFF ||--o{ RENTAL : "processes (staff_id)"
+    
+    RENTAL ||--o{ PAYMENT : "generates (rental_id)"
+    CUSTOMER ||--o{ PAYMENT : "pays (customer_id)"
+    STAFF ||--o{ PAYMENT : "collects (staff_id)"
+
+    STORE ||--o{ CUSTOMER : "registers (store_id)"
+    STORE ||--o{ STAFF : "employs (store_id)"
+    STAFF ||--|| STORE : "manages (manager_staff_id)"
+    
+    ADDRESS ||--o{ CUSTOMER : "lives_at (address_id)"
+    ADDRESS ||--o{ STAFF : "based_at (address_id)"
+    ADDRESS ||--o{ STORE : "located_at (address_id)"
+    
+    CITY ||--o{ ADDRESS : "contains (city_id)"
+    COUNTRY ||--o{ CITY : "contains (country_id)"
+```
+
+---
+
 ## 🚀 Key Architectural Pillars
 
 ### 1. Dynamic Graph Schema Discovery
@@ -418,45 +457,6 @@ python scripts/stress_test_dac.py
 ### 5. Launch UI Dashboard
 ```bash
 streamlit run src/ui/app.py
-```
-
----
-
-## 📊 Relational Database Architecture (Pagila Schema)
-
-The benchmark and test scripts target the classic Pagila schema, which serves as a realistic corporate transactional database:
-
-```mermaid
-erDiagram
-    ACTOR ||--o{ FILM_ACTOR : "plays_in (actor_id)"
-    FILM ||--o{ FILM_ACTOR : "features (film_id)"
-    
-    CATEGORY ||--o{ FILM_CATEGORY : "groups (category_id)"
-    FILM ||--o{ FILM_CATEGORY : "categorized_as (film_id)"
-    
-    LANGUAGE ||--o{ FILM : "spoken_in (language_id)"
-    
-    FILM ||--o{ INVENTORY : "stocked_as (film_id)"
-    STORE ||--o{ INVENTORY : "holds (store_id)"
-
-    INVENTORY ||--o{ RENTAL : "rented_out (inventory_id)"
-    CUSTOMER ||--o{ RENTAL : "makes (customer_id)"
-    STAFF ||--o{ RENTAL : "processes (staff_id)"
-    
-    RENTAL ||--o{ PAYMENT : "generates (rental_id)"
-    CUSTOMER ||--o{ PAYMENT : "pays (customer_id)"
-    STAFF ||--o{ PAYMENT : "collects (staff_id)"
-
-    STORE ||--o{ CUSTOMER : "registers (store_id)"
-    STORE ||--o{ STAFF : "employs (store_id)"
-    STAFF ||--|| STORE : "manages (manager_staff_id)"
-    
-    ADDRESS ||--o{ CUSTOMER : "lives_at (address_id)"
-    ADDRESS ||--o{ STAFF : "based_at (address_id)"
-    ADDRESS ||--o{ STORE : "located_at (address_id)"
-    
-    CITY ||--o{ ADDRESS : "contains (city_id)"
-    COUNTRY ||--o{ CITY : "contains (country_id)"
 ```
 
 ---
