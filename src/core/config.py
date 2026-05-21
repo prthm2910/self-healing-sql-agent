@@ -11,8 +11,7 @@ class Settings(BaseSettings):
     model_name: str = Field(default="openai/gpt-oss-20b")
     
     # API Keys
-    nvidia_api_key: str = ""
-    groq_api_key: str = ""
+    groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
 
     # Database Settings
