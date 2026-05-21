@@ -6,7 +6,8 @@ from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from src.services.llm import get_llm
-from src.services.sql_engine import SQLTranspiler, sql_engine
+from src.services.sql_engine import sql_engine
+from src.services.sql_assembler import sql_assembler
 from src.prompts.sql_agent import (
     get_sql_generation_prompt, 
     get_sql_healing_prompt,     
@@ -524,7 +525,7 @@ def generate_sql_node(state: State, config: RunnableConfig, store=None):
         selected_columns = state.get("selected_columns")
         selected_tables = state.get("selected_tables")
         
-        if selected_columns:
+        if selected_columns is not None:
             logger.info(f"Using SURGICALLY PRUNED schema ({len(selected_columns)} tables)")
             schema_str = str(selected_columns)
         elif selected_tables:
@@ -713,7 +714,7 @@ def assembler_node(state: State):
     join_plan = state.get("join_plan", {})
     
     try:
-        final_sql = SQLTranspiler.merge_snippets(snippets, join_plan)
+        final_sql = sql_assembler.assemble(snippets, join_plan)
         logger.info("SQL Assembly Successful.")
         
         logs = state.get("agent_logs", [])

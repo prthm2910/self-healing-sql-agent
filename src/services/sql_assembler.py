@@ -43,8 +43,8 @@ class SQLAssembler:
     def assemble(
         self, 
         islands: Dict[str, str], 
-        join_plan: List[Dict[str, Any]],
-        final_select: List[str]
+        join_plan: Any,
+        final_select: Optional[List[str]] = None
     ) -> str:
         """
         Stitches multiple SQL islands into a single CTE-based query.
@@ -55,10 +55,10 @@ class SQLAssembler:
 
         Args:
             islands (Dict[str, str]): Map of island names to their partial SQL.
-            join_plan (List[Dict[str, Any]]): List of join definitions with 
-                'source', 'target', and 'on' keys.
-            final_select (List[str]): List of column names to project in the 
-                final query (using prefixed aliases).
+            join_plan (Union[Dict[str, Any], List[Dict[str, Any]]]): Structured join instructions
+                (JoinPlan dict) or a list of join definitions (legacy).
+            final_select (Optional[List[str]]): List of column names to project in the 
+                final query (legacy).
 
         Returns:
             str: The fully assembled, pretty-printed SQL string.
@@ -66,21 +66,40 @@ class SQLAssembler:
         Raises:
             ValueError: If an island contains invalid SQL or if injection fails.
         """
-        logger.info(f"Assembling {len(islands)} islands with {len(join_plan)} joins.")
+        # Compatibility wrapper for the old list-based join plan interface
+        if isinstance(join_plan, list):
+            base_task = join_plan[0]["source"] if join_plan else list(islands.keys())[0]
+            steps = []
+            for j in join_plan:
+                steps.append({
+                    "left": j["source"],
+                    "right": j["target"],
+                    "on": j["on"],
+                    "join_type": j.get("join_type", "INNER")
+                })
+            plan_dict = {
+                "base_task": base_task,
+                "steps": steps,
+                "final_select": final_select if final_select else ["*"]
+            }
+        else:
+            plan_dict = join_plan
+
+        logger.info(f"Assembling {len(islands)} islands with JoinPlan: {plan_dict.get('base_task')}")
 
         # ### --- [STEP 1: KEY DISCOVERY] --- ###
 
         # [Elaborative Breakdown]
-        # This phase traverses the join plan to identify which columns (keys) 
+        # This phase traverses the join plan steps to identify which columns (keys) 
         # are required for the islands to connect. It handles the 'Naming Mismatch'
         # by stripping the island-prefixed aliases used in the join plan to 
         # find the actual physical column names for injection.
         
         required_keys = {island_id: set() for island_id in islands.keys()}
-        for join in join_plan:
+        for step in plan_dict.get("steps", []):
             try:
                 # Specify dialect for consistent parsing
-                on_expr = sqlglot.parse_one(join["on"], read=self.dialect)
+                on_expr = sqlglot.parse_one(step["on"], read=self.dialect)
                 for col in on_expr.find_all(exp.Column):
                     table_alias = col.table
                     col_name = col.this.name
@@ -92,7 +111,7 @@ class SQLAssembler:
                             col_name = col_name[len(table_alias) + 1:]
                         required_keys[table_alias].add(col_name)
             except Exception as e:
-                logger.warning(f"Could not parse join keys from '{join['on']}': {e}")
+                logger.warning(f"Could not parse join keys from '{step.get('on')}': {e}")
 
         # ### --- [STEP 2: AST MANIPULATION] --- ###
 
@@ -112,7 +131,7 @@ class SQLAssembler:
                 if not isinstance(island_ast, (exp.Select, exp.Query)):
                     ctes[island_id] = island_ast
                     continue
-
+ 
                 # A. Inject Missing Keys (with GROUP BY safety)
                 if isinstance(island_ast, exp.Select):
                     existing_cols = {c.alias_or_name for c in island_ast.expressions}
@@ -143,17 +162,39 @@ class SQLAssembler:
         # ### --- [STEP 3: FINAL STITCHING] --- ###
 
         try:
-            # Initialize root query with the first island in the join plan (or first available)
-            first_island_id = join_plan[0]["source"] if join_plan else list(islands.keys())[0]
-            root = sqlglot.select(*final_select).from_(f"{first_island_id} AS {first_island_id}")
+            # Initialize root query with the base_task
+            base_task_id = plan_dict.get("base_task")
+            if not base_task_id:
+                base_task_id = list(islands.keys())[0]
 
-            # Append joins from the plan
-            for join in join_plan:
+            raw_select = plan_dict.get("final_select", "*")
+            if isinstance(raw_select, str) and "," in raw_select:
+                select_exprs = [s.strip() for s in raw_select.split(",")]
+            elif isinstance(raw_select, str):
+                select_exprs = [raw_select]
+            else:
+                select_exprs = raw_select
+
+            root = sqlglot.select(*select_exprs).from_(f"{base_task_id} AS {base_task_id}")
+
+            # Append joins from the plan steps
+            for step in plan_dict.get("steps", []):
+                right = step["right"]
                 root = root.join(
-                    f"{join['target']} AS {join['target']}", 
-                    on=join["on"], 
-                    join_type=join.get("join_type", "INNER").upper()
+                    f"{right} AS {right}", 
+                    on=step["on"], 
+                    join_type=step.get("join_type", "INNER").upper()
                 )
+
+            # Add Final Clauses (Where, Order By, Limit)
+            if plan_dict.get("where"):
+                root = root.where(plan_dict["where"])
+                
+            if plan_dict.get("order_by"):
+                root = root.order_by(plan_dict["order_by"])
+                
+            if plan_dict.get("limit"):
+                root = root.limit(plan_dict["limit"])
 
             # Attach all islands as CTEs
             for island_id, ast in ctes.items():
