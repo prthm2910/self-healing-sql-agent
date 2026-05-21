@@ -6,6 +6,7 @@ from src.utils.limiter import rate_limiter
 from src.core.config import settings
 from src.utils.logger import logger
 
+
 class LoggedChatGroq(ChatGroq):
     """Wrapped ChatGroq with integrated rate limiting and retry logic."""
     

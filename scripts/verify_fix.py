@@ -1,7 +1,9 @@
 import uuid
-from src.workflow.builder import build_chatbot_graph
+
 from langchain_core.messages import HumanMessage
+
 from src.core.config import settings
+from src.workflow.builder import build_chatbot_graph
 
 def test_query():
     graph = build_chatbot_graph()

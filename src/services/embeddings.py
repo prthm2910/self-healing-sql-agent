@@ -1,7 +1,10 @@
 import time
+
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
 from src.core.config import settings
 from src.utils.logger import logger
+
 
 class LoggedEmbeddings(GoogleGenerativeAIEmbeddings):
     """Wrapped embeddings provider with logging."""

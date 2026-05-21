@@ -1,9 +1,10 @@
+from typing import List, Dict, Any, Optional
+
 import sqlglot
 from sqlglot import exp, parse_one
-from typing import List, Dict, Any, Optional
+
 from src.utils.logger import logger
 
-# ### --- [ENGINE] --- ###
 
 class SQLAssembler:
     """

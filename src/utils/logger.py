@@ -1,8 +1,8 @@
-import logging
-import sys
-from logging.handlers import RotatingFileHandler
 import os
+import sys
+import logging
 from contextvars import ContextVar
+from logging.handlers import RotatingFileHandler
 
 # Context-safe storage for logging metadata
 log_context: ContextVar[dict] = ContextVar("log_context", default={"user_id": "system", "thread_id": "global"})
@@ -43,7 +43,7 @@ def setup_logger(name: str = "ai_assistant"):
     # File Handler (Rotating)
     os.makedirs("logs", exist_ok=True)
     file_handler = RotatingFileHandler(
-        "logs/app.log", maxBytes=10*1024*1024, backupCount=5
+        "logs/app.log", maxBytes=10*1024*1024, backupCount=5, encoding="utf-8"
     )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)

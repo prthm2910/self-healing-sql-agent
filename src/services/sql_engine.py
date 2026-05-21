@@ -1,5 +1,6 @@
 import os
 import atexit
+from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse, urlunparse
 
@@ -8,7 +9,6 @@ import sqlglot
 from sqlglot import exp, parse_one
 from psycopg_pool import ConnectionPool
 from psycopg.rows import dict_row
-from dotenv import load_dotenv
 from langsmith import traceable
 
 from src.utils.logger import logger

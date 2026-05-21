@@ -1,6 +1,8 @@
 import time
 import threading
+
 from src.core.config import settings
+
 
 class GlobalRateLimiter:
     """
