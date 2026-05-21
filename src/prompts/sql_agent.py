@@ -97,12 +97,13 @@ SCHEMA:
 {schema}
 
 RULES:
-- Return ONLY valid PostgreSQL by populating the 'sql' field of the structured output.
+- Return ONLY valid PostgreSQL.
 - No semicolons.
 - Use explicit aliases (e.g., 't.' for table name).
 - Ensure ALL {required_columns} are in the SELECT list so they can be joined later.
+- STRICT SCHEMA ADHERENCE: Do NOT use columns not listed in the SCHEMA for a given table.
 """),
-        ("human", "{task_description}")
+        ("human", "TASK: \"{task_description}\"")
     ])
 
 def get_sql_response_format_prompt():
