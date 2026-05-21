@@ -29,9 +29,9 @@ def test_get_relevant_lessons_transparency():
     text, titles = get_relevant_lessons("how to use pipes?", mock_store)
     
     assert "### GLOBAL RULES" in text
-    assert "### CONTEXT-SPECIFIC LESSONS" in text
+    assert "### RELEVANT PAST MISTAKES" in text
     assert "GLOBAL: Global Rule" in titles
-    assert "SPECIFIC: Pipe Mistake" in titles
+    assert "SEMANTIC: Pipe Mistake" in titles
     assert len(titles) == 2
 
 def test_get_relevant_lessons_no_results():
