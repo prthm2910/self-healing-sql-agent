@@ -378,7 +378,7 @@ LIMIT 3;
 
 ---
 
-## 🛠️ Production-Ready Code Highlights
+## 🛠️ Code Highlights
 
 ### Battle-Tested Resiliency: `BaseNode.robust_invoke`
 AI APIs (e.g. Groq, llama) sometimes fail to enforce strict structured schemas. The base node implementation contains a robust manual parser fallback that recovers JSON block structures from LLM outputs using regular expressions and validates them with Pydantic:
