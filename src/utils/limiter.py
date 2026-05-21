@@ -3,13 +3,16 @@ import threading
 
 from src.core.config import settings
 
+RPM_LIMIT = settings.rate_limit_rpm
+TPM_LIMIT = settings.token_per_minute
+
 
 class GlobalRateLimiter:
     """
     A thread-safe Global Rate Limiter to manage multi-agent API usage.
     Tracks both RPM (Requests Per Minute) and TPM (Tokens Per Minute).
     """
-    def __init__(self, rpm_limit: int, tpm_limit: int = 500000):
+    def __init__(self, rpm_limit: int = RPM_LIMIT, tpm_limit: int = TPM_LIMIT):
         self.rpm_limit = rpm_limit
         self.tpm_limit = tpm_limit
         self.requests = [] # List of (timestamp)
@@ -67,6 +70,4 @@ class GlobalRateLimiter:
                 "tpm_limit": self.tpm_limit
             }
 
-# Singleton Instance
-# Groq Free Tier typically has 30 RPM and variable TPM.
-rate_limiter = GlobalRateLimiter(rpm_limit=27, tpm_limit=500000)
+rate_limiter = GlobalRateLimiter(rpm_limit=RPM_LIMIT, tpm_limit=TPM_LIMIT)
