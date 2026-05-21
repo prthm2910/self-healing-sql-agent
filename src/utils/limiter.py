@@ -5,48 +5,66 @@ from src.core.config import settings
 class GlobalRateLimiter:
     """
     A thread-safe Global Rate Limiter to manage multi-agent API usage.
-    Ensures total requests stay under the given RPM cap.
+    Tracks both RPM (Requests Per Minute) and TPM (Tokens Per Minute).
     """
-    def __init__(self, rpm_limit: int):
+    def __init__(self, rpm_limit: int, tpm_limit: int = 500000):
         self.rpm_limit = rpm_limit
-        self.requests = []
+        self.tpm_limit = tpm_limit
+        self.requests = [] # List of (timestamp)
+        self.tokens = [] # List of (timestamp, token_count)
         self.lock = threading.Lock()
 
     def wait_and_record(self, timeout: float = 60.0) -> bool:
         """
-        Blocks until a request slot is available or timeout is reached.
+        Blocks until both a request slot and token capacity are available.
         """
         start_time = time.time()
         while time.time() - start_time < timeout:
             with self.lock:
                 now = time.time()
-                # Clean up old timestamps (older than 60s)
+                # Clean up old data (older than 60s)
                 self.requests = [t for t in self.requests if now - t < 60]
+                self.tokens = [item for item in self.tokens if now - item[0] < 60]
                 
-                if len(self.requests) < self.rpm_limit:
-                    self.requests.append(now)
-                    return True
-            
-            # Slot not available, wait a bit
-            time.sleep(0.5)
+                # Check RPM
+                if len(self.requests) >= self.rpm_limit:
+                    time.sleep(0.5)
+                    continue
+                
+                # Check TPM (Conservative estimate: assume new request takes 4k tokens if unknown)
+                current_tpm = sum(item[1] for item in self.tokens)
+                if current_tpm >= self.tpm_limit:
+                    time.sleep(0.5)
+                    continue
+                
+                # Capacity available! Record request
+                self.requests.append(now)
+                return True
             
         return False
 
+    def record_usage(self, token_count: int):
+        """Records actual token usage after a successful call."""
+        with self.lock:
+            self.tokens.append((time.time(), token_count))
+
     def check_and_record(self) -> bool:
         """Non-blocking check (Legacy support)."""
+        return self.wait_and_record(timeout=0.1)
+
+    def get_stats(self) -> dict:
+        """Returns current usage stats."""
         with self.lock:
             now = time.time()
             self.requests = [t for t in self.requests if now - t < 60]
-            if len(self.requests) >= self.rpm_limit:
-                return False
-            self.requests.append(now)
-            return True
+            self.tokens = [item for item in self.tokens if now - item[0] < 60]
+            return {
+                "rpm": len(self.requests),
+                "rpm_limit": self.rpm_limit,
+                "tpm": sum(item[1] for item in self.tokens),
+                "tpm_limit": self.tpm_limit
+            }
 
-    def get_current_load(self) -> int:
-        with self.lock:
-            now = time.time()
-            self.requests = [t for t in self.requests if now - t < 60]
-            return len(self.requests)
-
-# Singleton Instance for the entire App
-rate_limiter = GlobalRateLimiter(rpm_limit=20)
+# Singleton Instance
+# Groq Free Tier typically has 30 RPM and variable TPM.
+rate_limiter = GlobalRateLimiter(rpm_limit=27, tpm_limit=500000)

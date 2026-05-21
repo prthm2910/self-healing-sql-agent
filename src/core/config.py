@@ -14,10 +14,10 @@ class Settings(BaseSettings):
     # API Keys
     nvidia_api_key: str = ""
     groq_api_key: str = ""
-    google_api_key: str
+    google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
 
     # Database Settings
-    database_url: str
+    database_url: str = os.getenv("DATABASE_URL", "")
     
     # Embedding Settings
     embedding_model: str = "models/gemini-embedding-2"
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # App Settings
     default_user_id: str = "user_123"
     memory_tag: str = "[MEMORIZE]"
-    rate_limit_rpm: int = 35
+    rate_limit_rpm: int = 25
     context_window_size: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

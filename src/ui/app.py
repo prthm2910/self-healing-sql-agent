@@ -92,7 +92,7 @@ prompt = st.chat_input(
 if prompt:
     logger.info(f"User interaction: prompt received (len={len(prompt)})")
     # 1. Rate Limit Check (Shared Global Limit)
-    if rate_limiter.get_current_load() >= settings.rate_limit_rpm:
+    if rate_limiter.get_stats()['rpm'] >= settings.rate_limit_rpm:
         logger.warning(f"Rate limit hit: {settings.rate_limit_rpm} RPM")
         st.error(f"⚠️ Rate limit reached ({settings.rate_limit_rpm} RPM). Please wait.")
         st.stop()
