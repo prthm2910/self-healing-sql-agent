@@ -545,12 +545,12 @@ def generate_sql_node(state: State, config: RunnableConfig, store=None):
         prompt_template = get_sql_generation_prompt()
         chain = prompt_template | llm.with_structured_output(SQLGenerationOutput)
         
-        res = chain.invoke({
+        res = robust_invoke(chain, {
             "schema": schema_str,
             "lessons": lessons_text,
             "history": state["messages"][:-1],
             "question": user_question
-        })
+        }, SQLGenerationOutput)
         
         sql_query = res.sql.strip().replace("```sql", "").replace("```", "")
         return {"current_sql": sql_query, "retry_count": 0}
@@ -567,8 +567,14 @@ def execute_sql_node(state: State, config: RunnableConfig):
     
     token = log_context.set({"user_id": user_id, "thread_id": thread_id})
     try:
-        logger.info(f"Node: execute_sql | Query: {state['current_sql']}")
-        raw_result = sql_engine.execute_query(state["current_sql"])
+        current_sql = state.get("current_sql")
+        if not current_sql:
+            error_msg = state.get("sql_error") or "No SQL query generated."
+            logger.error(f"Node: execute_sql | Missing Query! Error: {error_msg}")
+            return {"sql_error": error_msg}
+
+        logger.info(f"Node: execute_sql | Query: {current_sql}")
+        raw_result = sql_engine.execute_query(current_sql)
         
         # Use Pydantic for internal normalization
         result = ExecuteSQLOutput(**raw_result)
@@ -611,12 +617,12 @@ def heal_sql_node(state: State, config: RunnableConfig, store=None):
         
         prompt_template = get_sql_healing_prompt()
         chain = prompt_template | llm.with_structured_output(SQLGenerationOutput)
-        res = chain.invoke({
+        res = robust_invoke(chain, {
             "schema": schema_str,
             "failed_query": state["current_sql"],
             "error_message": state["sql_error"],
             "question": user_question
-        })
+        }, SQLGenerationOutput)
         
         fixed_sql = res.sql.strip().replace("```sql", "").replace("```", "")
         
@@ -680,7 +686,7 @@ RULES:
 - STRICT SCHEMA ADHERENCE: Do NOT use columns not listed in the SCHEMA for a given table.
 """
         chain = llm.with_structured_output(WorkerOutput)
-        res = chain.invoke([SystemMessage(content=prompt)])
+        res = robust_invoke(chain, [SystemMessage(content=prompt)], WorkerOutput)
         sql = res.sql.strip().replace("```sql", "").replace("```", "")
         
         try:
@@ -791,7 +797,7 @@ ERROR: {state_data['sql_error']}
 FIX: {state_data['fixed_sql']}
 """
         distiller = llm.with_structured_output(LessonDistillationOutput)
-        lesson = distiller.invoke([SystemMessage(content=learning_prompt)])
+        lesson = robust_invoke(distiller, [SystemMessage(content=learning_prompt)], LessonDistillationOutput)
         
         record_lesson(
             lesson.title, 
