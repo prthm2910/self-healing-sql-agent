@@ -1,10 +1,16 @@
 import os
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
+
 import json
 import asyncio
+import uuid
 from langchain_core.messages import HumanMessage
 from src.workflow.builder import sql_chatbot_graph
 from src.core.config import settings
 from src.utils.logger import logger
+
+# Generate a unique run ID for this test suite execution
+run_id = uuid.uuid4().hex[:8]
 
 async def run_test(query, level_name):
     print(f"\n--- Testing Level: {level_name} ---")
@@ -12,7 +18,7 @@ async def run_test(query, level_name):
     
     config = {
         "configurable": {
-            "thread_id": f"test_{level_name}",
+            "thread_id": f"test_{level_name}_{run_id}",
             "user_id": "test_user"
         }
     }

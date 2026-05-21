@@ -1,5 +1,6 @@
 import operator
 from typing import Annotated, TypedDict, List, Dict, Any, Optional
+
 from langgraph.graph.message import add_messages
 
 class State(TypedDict):
@@ -14,6 +15,7 @@ class State(TypedDict):
     
     # Divide and Conquer fields
     sub_tasks: List[Dict[str, Any]] # List of atomic SQL generation tasks
+    current_task: Optional[Dict[str, Any]] # Current worker task state payload
     join_plan: Dict[str, Any] # Structured instructions for the Assembler
     sql_snippets: Annotated[Dict[str, str], operator.ior] # Merged by task_id (ior : In Place OR)
     current_task_index: int # Iterator for sequential or verification loops

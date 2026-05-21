@@ -1,10 +1,9 @@
 import uuid
-from datetime import datetime
 import streamlit as st
-from src.services.database import delete_thread_data
-from src.core.config import settings
+from datetime import datetime
 
-# Systemic Lessons Management
+from src.core.config import settings
+from src.services.database import delete_thread_data
 from src.services.lessons import list_all_lessons
 
 def render_sidebar(chatbot_graph):

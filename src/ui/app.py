@@ -1,13 +1,14 @@
 import uuid
+
 import streamlit as st
+from langsmith import Client
 from langchain_core.messages import AIMessage, HumanMessage
 
 from src.core.config import settings
-from src.ui.components import render_sidebar, save_thread_metadata
 from src.utils.limiter import rate_limiter
-from src.workflow.builder import build_chatbot_graph
 from src.utils.logger import logger, log_context
-from langsmith import Client
+from src.workflow.builder import build_chatbot_graph
+from src.ui.components import render_sidebar, save_thread_metadata
 
 # Initialize LangSmith client for tracing
 ls_client = Client()
@@ -92,7 +93,7 @@ prompt = st.chat_input(
 if prompt:
     logger.info(f"User interaction: prompt received (len={len(prompt)})")
     # 1. Rate Limit Check (Shared Global Limit)
-    if rate_limiter.get_current_load() >= settings.rate_limit_rpm:
+    if rate_limiter.get_stats()['rpm'] >= settings.rate_limit_rpm:
         logger.warning(f"Rate limit hit: {settings.rate_limit_rpm} RPM")
         st.error(f"⚠️ Rate limit reached ({settings.rate_limit_rpm} RPM). Please wait.")
         st.stop()
