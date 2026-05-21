@@ -373,28 +373,66 @@ def anchor_selector_node(state: State, config: RunnableConfig, store=None):
         all_tables = sql_engine.list_tables()
 
         # Pass 1: Semantic Entity Extraction (Structured)
-        entity_prompt = f"""Identify the core database entities and filters mentioned in this question. Output MUST be valid JSON with keys: "anchors", "thought_process".
+        entity_prompt = f"""Identify the core database entities and filters mentioned in this question.
+
 Question: "{last_msg}"
 Example Entities: 'Canada', 'Action', 'most rentals', 'spent'.
+
+### INSTRUCTIONS:
+You must call the AnchorSelection tool.
+- Populate the 'anchors' field with the list of identified database entities or filters.
+- Populate the 'thought_process' field with your detailed internal reasoning.
+Both fields are strictly required. Do not leave 'thought_process' empty.
 """
         entity_chain = llm.with_structured_output(AnchorSelection)
-        entity_res = entity_chain.invoke([SystemMessage(content=entity_prompt)])
+        entity_res = robust_invoke(entity_chain, [SystemMessage(content=entity_prompt)], AnchorSelection)
         entities = ", ".join(entity_res.anchors)
 
         # Pass 2: Hard Physical Table Mapping
-        mapping_prompt = f"""You are a Database Architect. Map the following entities to the specific PHYSICAL tables needed to query them. Output MUST be valid JSON with keys: "anchors", "thought_process".
+        mapping_prompt = f"""You are a Database Architect. Map the following entities to the specific PHYSICAL tables needed to query them.
+
 Entities Found: {entities}
 Available Tables: {all_tables}
 
 ### CRITICAL RULES:
 - If 'Canada' or geographic filters are mentioned, include 'country'.
 - If 'Action' or categories are mentioned, include 'category'.
-- If 'spent' or 'amount' is mentioned, include 'payment'.
+- If 'spent', 'amount', 'revenue', 'payment', 'paid', or 'sales' is mentioned, include 'payment'.
 - NEVER select views (ending in '_info' or '_list').
+
+### INSTRUCTIONS:
+You must call the AnchorSelection tool.
+- Populate the 'anchors' field with the specific physical table names (e.g. ['customer', 'rental']).
+- Populate the 'thought_process' field with your step-by-step table mapping reasoning.
+Both fields are strictly required. Do not leave 'thought_process' empty.
 """
         anchor_chain = llm.with_structured_output(AnchorSelection)
-        anchor_res = anchor_chain.invoke([SystemMessage(content=mapping_prompt)])
+        anchor_res = robust_invoke(anchor_chain, [SystemMessage(content=mapping_prompt)], AnchorSelection)
         anchors = [a for a in anchor_res.anchors if a in all_tables]
+
+        # Deterministic Physical Table Mapping Fallback (Post-processing)
+        last_msg_lower = last_msg.lower()
+        
+        # Payment keywords
+        payment_keywords = ["spent", "amount", "revenue", "payment", "paid", "sales", "price", "income"]
+        if any(kw in last_msg_lower for kw in payment_keywords) and "payment" in all_tables:
+            if "payment" not in anchors:
+                logger.info("Deterministic injection: Adding 'payment' table based on query keywords.")
+                anchors.append("payment")
+                
+        # Category keywords
+        category_keywords = ["category", "genre", "categories", "action", "animation", "children", "classics", "comedy", "documentary", "drama", "family", "foreign", "games", "horror", "music", "new", "sci-fi", "sports", "travel"]
+        if any(kw in last_msg_lower for kw in category_keywords) and "category" in all_tables:
+            if "category" not in anchors:
+                logger.info("Deterministic injection: Adding 'category' table based on query keywords.")
+                anchors.append("category")
+                
+        # Country keywords
+        country_keywords = ["country", "countries", "canada", "geographic", "address", "city"]
+        if any(kw in last_msg_lower for kw in country_keywords) and "country" in all_tables:
+            if "country" not in anchors:
+                logger.info("Deterministic injection: Adding 'country' table based on query keywords.")
+                anchors.append("country")
 
         # 3. Deterministic FK Bridge Traversal
         bridges = sql_engine.get_bridge_tables(anchors)
