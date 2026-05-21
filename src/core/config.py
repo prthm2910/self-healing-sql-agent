@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     memory_tag: str = "[MEMORIZE]"
     rate_limit_rpm: int = 25
     context_window_size: int = 20
+    token_per_minute: int = 500000
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
