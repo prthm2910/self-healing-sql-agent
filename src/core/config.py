@@ -9,7 +9,6 @@ class Settings(BaseSettings):
 
     # LLM Settings
     model_name: str = Field(default="openai/gpt-oss-20b")
-    nim_base_url: str = "https://integrate.api.nvidia.com/v1"
     
     # API Keys
     nvidia_api_key: str = ""
