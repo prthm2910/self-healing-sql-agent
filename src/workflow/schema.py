@@ -98,7 +98,10 @@ class JoinPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     base_task: str = Field(..., description="The ID of the primary task to start the FROM clause.")
     steps: List[JoinStep] = Field(..., description="Ordered steps to join additional snippets.")
-    final_select: str = Field(..., description="The final columns to select from the joined set.")
+    final_select: str = Field(..., description="The final columns to select (comma-separated list of 'alias.column').")
+    where: Optional[str] = Field(None, description="Optional final WHERE clause (e.g. 't1.amount > 10').")
+    order_by: Optional[str] = Field(None, description="Optional final ORDER BY clause (e.g. 't1.total DESC').")
+    limit: Optional[int] = Field(None, description="Optional final LIMIT count.")
 
 class DecomposerOutput(BaseNodeOutput):
     """

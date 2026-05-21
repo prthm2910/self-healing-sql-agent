@@ -338,7 +338,7 @@ Analyze the user interaction and determine if the current request requires joini
 - If any geographic (Country/City) or category filters were mentioned recently, it is COMPLEX.
 """
         chain = llm.with_structured_output(ClassifierOutput)
-        res = chain.invoke([SystemMessage(content=prompt)])
+        res = robust_invoke(chain, [SystemMessage(content=prompt)], ClassifierOutput)
         res.node_name = "classifier"
         
         logger.info(f"Classification: {'COMPLEX' if res.is_complex else 'SIMPLE'} | Thought: {res.thought_process}")

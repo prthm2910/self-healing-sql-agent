@@ -363,12 +363,26 @@ class SQLTranspiler:
             else:
                 final_query = final_query.join(right, on=join_cond)
 
-        # 3. Inject Snippets as CTEs (Deterministic isolation)
+        # 3. Add Final Clauses (Where, Order By, Limit)
+        if join_plan.get("where"):
+            final_query = final_query.where(join_plan["where"])
+            
+        if join_plan.get("order_by"):
+            final_query = final_query.order_by(join_plan["order_by"])
+            
+        if join_plan.get("limit"):
+            final_query = final_query.limit(join_plan["limit"])
+
+        # 4. Inject Snippets as CTEs (Deterministic isolation)
         for task_id, raw_sql in snippets.items():
             # Clean up the raw SQL (remove trailing semicolons if any)
             clean_sql = raw_sql.strip().rstrip(";")
             
-            # Use SQLGlot to wrap the snippet as a CTE
-            final_query = final_query.with_(task_id, as_=parse_one(clean_sql, read="postgres"))
+            try:
+                # Use SQLGlot to wrap the snippet as a CTE
+                final_query = final_query.with_(task_id, as_=parse_one(clean_sql, read="postgres"))
+            except Exception as e:
+                logger.error(f"Failed to parse snippet '{task_id}': {e}")
+                raise ValueError(f"Snippet '{task_id}' has syntax errors: {e}")
             
         return final_query.sql(dialect="postgres", pretty=True)
