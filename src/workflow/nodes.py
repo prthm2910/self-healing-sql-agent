@@ -735,39 +735,49 @@ def format_sql_response_node(state: State, config: RunnableConfig):
         user_question = next(m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage))
         raw_results = state.get("sql_results", [])
         is_aggregated = state.get("is_aggregated", False)
-
-        sample_data = raw_results[:5] if len(raw_results) > 5 else raw_results
         
-        prompt_template = get_sql_response_format_prompt()
-        chain = prompt_template | llm.with_structured_output(SQLResponse)
+        output_parts = []
         
-        try:
-            response = chain.invoke({
-                "question": user_question,
-                "query": state["current_sql"],
-                "data": str(sample_data)
-            })
-            
-            output_parts = []
-            if response.summary:
-                output_parts.append(response.summary)
-            elif is_aggregated and raw_results:
+        if not raw_results:
+            output_parts.append("No results found.")
+        elif is_aggregated:
+            # For aggregated queries, use the LLM to write a natural summary
+            prompt_template = get_sql_response_format_prompt()
+            chain = prompt_template | llm.with_structured_output(SQLResponse)
+            try:
+                response = robust_invoke(chain, {
+                    "question": user_question,
+                    "query": state.get("current_sql", ""),
+                    "data": str(raw_results)
+                }, SQLResponse)
+                
+                if response.summary:
+                    output_parts.append(response.summary)
+                else:
+                    val = list(raw_results[0].values())[0]
+                    output_parts.append(f"The result is {val}.")
+            except Exception as e:
+                logger.error(f"Failed to generate summary: {e}")
                 val = list(raw_results[0].values())[0]
                 output_parts.append(f"The result is {val}.")
-
-            if not is_aggregated and raw_results:
-                table_md = generate_markdown_table(raw_results)
-                output_parts.append(table_md)
-                
-            if state.get("current_sql"):
-                sql_block = f"**Executed SQL:**\n```sql\n{state['current_sql'].strip()}\n```"
-                output_parts.append(sql_block)
-                
-            final_content = "\n\n".join(output_parts)
-            return {"messages": [AIMessage(content=final_content or "No results found.")]}
+        else:
+            # For list queries, use a standardized, clean template + markdown table (no LLM overhead!)
+            row_count = len(raw_results)
+            output_parts.append(f"Here are the details of the {row_count} results:")
             
-        except Exception as e:
-            return {"messages": [AIMessage(content="I encountered an error while formatting the data.")]}
+            table_md = generate_markdown_table(raw_results)
+            output_parts.append(table_md)
+            
+        # Append executed SQL code
+        if state.get("current_sql"):
+            sql_block = f"**Executed SQL:**\n```sql\n{state['current_sql'].strip()}\n```"
+            output_parts.append(sql_block)
+            
+        final_content = "\n\n".join(output_parts)
+        return {"messages": [AIMessage(content=final_content)]}
+    except Exception as e:
+        logger.error(f"Renderer error: {e}", exc_info=True)
+        return {"messages": [AIMessage(content="I encountered an error while formatting the data.")]}
     finally:
         log_context.reset(token)
 
