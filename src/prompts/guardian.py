@@ -1,8 +1,37 @@
+# ### --- IMPORTS --- ###
 from langchain_core.prompts import ChatPromptTemplate
 
-def get_locked_guardian_prompt():
+# ##############################################################################
+# [Elaborative Breakdown] Context-Aware Security Guardian & Clarification Locks
+# Why a split Guardian structure?
+# In transactional user-facing AI chat applications, users frequently provide ambiguous,
+# brief, or vague inputs (e.g., "show films", "help me"). Generating SQL for such queries
+# directly can result in massive, slow database queries or irrelevant results.
+#
+# Our system uses a two-tiered "Clarification Lock" pattern:
+# 1. Unlocked Guardian (`get_unlocked_guardian_prompt`):
+#    Evaluates new user messages to check if they have valid database query intents (SQL), 
+#    are general chit-chat / unauthorized requests (DENY), or are related but vague (CLARIFY).
+# 2. Locked Guardian (`get_locked_guardian_prompt`):
+#    If the previous interaction resulted in a CLARIFY status, the state enters a lock, 
+#    recording the vague prompt context. When the user responds to our clarification 
+#    question, the Locked Guardian evaluates their message *in the context of* the 
+#    original vague request to resolve it. This provides continuity and ensures the user
+#    remains in the loop until a concrete query intent is clarified.
+# ##############################################################################
+
+
+# ### --- LOCKED GUARDIAN FACTORY --- ###
+
+def get_locked_guardian_prompt() -> ChatPromptTemplate:
     """
-    Context-aware locked guardian prompt.
+    Factory function for the Context-Aware Locked Guardian prompt template.
+    
+    Used when the conversation is locked in a clarification loop, evaluating the new
+    user response alongside the cached vague question context.
+    
+    Returns:
+        A compiled ChatPromptTemplate for locked context validation.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a Context-Aware Security Guardian.
@@ -21,9 +50,17 @@ Note: If the user provides a COMPLETELY NEW but valid SQL request (e.g., pivotin
 """)
     ])
 
-def get_unlocked_guardian_prompt():
+
+# ### --- UNLOCKED GUARDIAN FACTORY --- ###
+
+def get_unlocked_guardian_prompt() -> ChatPromptTemplate:
     """
-    Standard unlocked intent classification prompt.
+    Factory function for the standard Unlocked Guardian prompt template.
+    
+    Performs primary intent classification (SQL, DENY, or CLARIFY) on fresh user messages.
+    
+    Returns:
+        A compiled ChatPromptTemplate for standard intent classification.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are an Intent Classifier and Security Guardian.
@@ -41,10 +78,19 @@ User Message: "{last_msg}"
 """)
     ])
 
-def get_clarification_prompt():
+
+# ### --- CLARIFICATION PROMPT FACTORY --- ###
+
+def get_clarification_prompt() -> ChatPromptTemplate:
     """
-    Follow-up clarification prompt.
+    Factory function for generating dynamic customer clarification questions.
+    
+    Used to prompt the user for specific parameters when their query is classified as CLARIFY.
+    
+    Returns:
+        A compiled ChatPromptTemplate for generating clarification questions.
     """
     return ChatPromptTemplate.from_messages([
         ("system", "The user asked: '{last_msg}'. This is too vague for a SQL query. Ask a concise follow-up question to clarify what they want to see from the DVD rental database. Output MUST be valid JSON with key: 'clarification_question'.")
     ])
+

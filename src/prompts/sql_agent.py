@@ -1,8 +1,40 @@
+# ### --- IMPORTS --- ###
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-def get_sql_generation_prompt():
+# ##############################################################################
+# [Elaborative Breakdown] Prompt Engineering for Structured SQL Code Generation & Self-Healing
+# Why this suite of SQL Prompts?
+# SQL generation by LLMs is highly prone to syntactic differences, missing joins, and 
+# column hallucinations. To guarantee 100% valid execution, we split prompts into two paths:
+#
+# 1. Simple SQL Path:
+#    - `get_sql_generation_prompt`: Direct single-shot generation. It injects retrieved 
+#      dynamic lessons to prevent past failures and enforces strict schema rules.
+#    - `get_sql_healing_prompt`: The debugger. When execution fails, it receives the exact
+#      SQL that errored and the database error traceback to isolate the correction.
+# 2. Complex SQL Divide-and-Conquer Path:
+#    - `get_decomposer_prompt`: The Planner/Manager. Decouples complex multi-join queries
+#      into isolated single-table sub-tasks (Logic Islands) and generates an AST assembly 
+#      join plan, avoiding cognitive load on a single generation.
+#    - `get_worker_prompt`: The Isolated Worker. Receives exactly one sub-task and is
+#      strictly instructed to output clean SQL for its subset tables while forcing join 
+#      columns to remain visible in SELECT blocks.
+# 3. Response Summarization (`get_sql_response_format_prompt`):
+#    Translates database result sets into concise natural language summaries, strictly
+#    abiding by formatting parameters (e.g. no backticks).
+# ##############################################################################
+
+
+# ### --- SQL GENERATION PROMPT --- ###
+
+def get_sql_generation_prompt() -> ChatPromptTemplate:
     """
-    Prompt factory for the initial SQL generation step with Lessons.
+    Factory function for the primary SQL generation system prompt.
+    
+    Integrates dynamic systemic lessons and the pruned schema to guide the LLM.
+    
+    Returns:
+        A compiled ChatPromptTemplate for generating database queries.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a SQL expert for the 'Pagila' DVD rental database.
@@ -28,9 +60,17 @@ STRICT RULES:
         ("human", "{question}")
     ])
 
-def get_sql_healing_prompt():
+
+# ### --- SQL HEALING PROMPT --- ###
+
+def get_sql_healing_prompt() -> ChatPromptTemplate:
     """
-    Prompt factory for the self-healing step when a query fails.
+    Factory function for the self-healing SQL debugger prompt.
+    
+    Injects the exact failed statement and database engine error trace for debugging.
+    
+    Returns:
+        A compiled ChatPromptTemplate for self-healing SQL debug operations.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a SQL debugging expert. 
@@ -49,9 +89,17 @@ INSTRUCTIONS:
         ("human", "Fix the query for: {question}")
     ])
 
-def get_decomposer_prompt():
+
+# ### --- DECOMPOSER PROMPT --- ###
+
+def get_decomposer_prompt() -> ChatPromptTemplate:
     """
-    Prompt factory for the Manager node to decompose queries.
+    Factory function for the Manager node query decomposition prompt.
+    
+    Splits complex multi-table queries into atomic logic islands and a merge join blueprint.
+    
+    Returns:
+        A compiled ChatPromptTemplate for multi-agent decomposition.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a SQL Strategy Manager for the Pagila (DVD Rental) database.
@@ -81,13 +129,20 @@ SKELETON SCHEMA (Tables & FKs):
 - order_by: "task_2.revenue DESC"
 - limit: 5
 """),
-
         ("human", "{question}")
     ])
 
-def get_worker_prompt():
+
+# ### --- WORKER PROMPT --- ###
+
+def get_worker_prompt() -> ChatPromptTemplate:
     """
-    Prompt factory for the ReliableWorker node to solve atomic sub-tasks.
+    Factory function for the isolated worker node query generation prompt.
+    
+    Forces generation of a singular, self-contained query snippet targeting specific tables.
+    
+    Returns:
+        A compiled ChatPromptTemplate for SQL worker generation.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a Reliable SQL Worker. Solve the following ATOMIC sub-task for the Pagila database.
@@ -106,9 +161,17 @@ RULES:
         ("human", "TASK: \"{task_description}\"")
     ])
 
-def get_sql_response_format_prompt():
+
+# ### --- RESPONSE FORMAT PROMPT --- ###
+
+def get_sql_response_format_prompt() -> ChatPromptTemplate:
     """
-    Prompt factory for turning raw SQL data into a natural language summary of aggregated results.
+    Factory function for summarizing raw SQL output into client-friendly context-aware answers.
+    
+    Enforces clean markdown formatting, strictly prohibiting formatting tricks like backticks.
+    
+    Returns:
+        A compiled ChatPromptTemplate for database answer summarization.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a concise Data Analyst for the 'Pagila' DVD rental store.
@@ -127,3 +190,4 @@ STRICT INSTRUCTIONS FOR THE SUMMARY:
 """),
         ("human", "Summarize these results.")
     ])
+

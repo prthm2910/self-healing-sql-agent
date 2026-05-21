@@ -1,8 +1,44 @@
+# ### --- IMPORTS --- ###
 from langchain_core.prompts import ChatPromptTemplate
 
-def get_classifier_prompt():
+# ##############################################################################
+# [Elaborative Breakdown] Multi-Pass Schema Discovery & Intent Classification
+# Why multi-pass schema discovery?
+# When dealing with large relational schemas (e.g., Pagila's DVD rental database),
+# dumping the entire raw schema (all tables, columns, and keys) into the LLM prompt 
+# context creates substantial noise. This dilutes the LLM's attention, leads to 
+# hallucinations (e.g., using non-existent table joins), and wastes tokens.
+#
+# Our multi-pass architecture splits this complex problem into smaller, highly specialized 
+# sub-tasks, each backed by a distinct prompt:
+#
+# 1. Complexity Classification (`get_classifier_prompt`):
+#    A quick, low-cost pass determining if a query requires multi-table joins (COMPLEX) or
+#    runs against a single table (SIMPLE). This routes simple queries down an optimized 
+#    one-step path and keeps complex logic isolated.
+# 2. Semantic Entity Extraction (`get_entity_extraction_prompt`):
+#    Extracts natural language database entity filters (e.g., "Canada", "Action") without 
+#    focusing on physical database table structures yet.
+# 3. Physical Table Mapping (`get_physical_mapping_prompt`):
+#    Forces hard structural mapping of semantic entities to concrete physical tables
+#    (e.g., mapping "Canada" to `country` table, "Action" to `category` table). It enforces 
+#    strict rules such as avoiding read-only helper views.
+# 4. Schema Pruning (`get_schema_pruning_prompt`):
+#    Receives the mapped tables and trims the active schema to only the required columns 
+#    and join keys, maintaining AST structural integrity while minimizing context.
+# ##############################################################################
+
+
+# ### --- CLASSIFIER PROMPT FACTORY --- ###
+
+def get_classifier_prompt() -> ChatPromptTemplate:
     """
-    Prompt for classifying the complexity of a user query.
+    Factory function for the SQL complexity intent classification prompt template.
+    
+    Determines if the user interaction requires a multi-table join or simple single-table operations.
+    
+    Returns:
+        A compiled ChatPromptTemplate for complexity classification.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a SQL Query Planner. 
@@ -26,9 +62,17 @@ Analyze the user interaction and determine if the current request requires joini
 """)
     ])
 
-def get_entity_extraction_prompt():
+
+# ### --- ENTITY EXTRACTION PROMPT FACTORY --- ###
+
+def get_entity_extraction_prompt() -> ChatPromptTemplate:
     """
-    Pass 1: Semantic Entity Extraction prompt.
+    Factory function for the Semantic Entity Extraction prompt template.
+    
+    Extracts semantic search keywords, locations, or filters to identify query anchor points.
+    
+    Returns:
+        A compiled ChatPromptTemplate for entity extraction.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """Identify the core database entities and filters mentioned in this question.
@@ -44,9 +88,18 @@ Both fields are strictly required. Do not leave 'thought_process' empty.
 """)
     ])
 
-def get_physical_mapping_prompt():
+
+# ### --- PHYSICAL MAPPING PROMPT FACTORY --- ###
+
+def get_physical_mapping_prompt() -> ChatPromptTemplate:
     """
-    Pass 2: Hard Physical Table Mapping prompt.
+    Factory function for mapping semantic entities to physical database tables.
+    
+    Enforces strict architectural boundaries to block read-only view lookups and resolve
+    ambiguous terms to concrete table joins.
+    
+    Returns:
+        A compiled ChatPromptTemplate for physical database table mapping.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a Database Architect. Map the following entities to the specific PHYSICAL tables needed to query them.
@@ -68,9 +121,17 @@ Both fields are strictly required. Do not leave 'thought_process' empty.
 """)
     ])
 
-def get_schema_pruning_prompt():
+
+# ### --- SCHEMA PRUNING PROMPT FACTORY --- ###
+
+def get_schema_pruning_prompt() -> ChatPromptTemplate:
     """
-    Prunes the schema to only include relevant columns for the query.
+    Factory function for pruning columns and foreign keys to create a minimal active schema query.
+    
+    Ensures join keys are preserved while omitting irrelevant column noise.
+    
+    Returns:
+        A compiled ChatPromptTemplate for schema pruning.
     """
     return ChatPromptTemplate.from_messages([
         ("system", """You are a Data Architect. Prune the schema below to ONLY include the columns needed for this question. Output MUST be valid JSON with keys: "selected_tables", "selected_columns", "fk_relationships", "fk_path_identified", "thought_process".
@@ -85,3 +146,4 @@ Relationships:
 2. Retain columns needed for filters (WHERE), ordering (ORDER BY), and display (SELECT).
 """)
     ])
+

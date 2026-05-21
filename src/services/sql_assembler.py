@@ -96,20 +96,23 @@ class SQLAssembler:
         # by stripping the island-prefixed aliases used in the join plan to 
         # find the actual physical column names for injection.
         
+        # Initialize a dictionary mapping each island_id to a set of required physical join keys
         required_keys = {island_id: set() for island_id in islands.keys()}
         for step in plan_dict.get("steps", []):
             try:
                 # Specify dialect for consistent parsing
                 on_expr = sqlglot.parse_one(step["on"], read=self.dialect)
+                
+                # Walk the parsed join expression to locate all column identifiers
                 for col in on_expr.find_all(exp.Column):
                     table_alias = col.table
                     col_name = col.this.name
                     
                     if table_alias in required_keys:
-                        # Strip island prefix before identifying physical column
-                        # e.g., 'island_actor_id' -> 'actor_id'
+                        # Strip table/island prefix to get raw database column name (e.g. 'actor_actor_id' -> 'actor_id')
                         if col_name.startswith(f"{table_alias}_"):
                             col_name = col_name[len(table_alias) + 1:]
+                        # Register the column key for surgical injection
                         required_keys[table_alias].add(col_name)
             except Exception as e:
                 logger.warning(f"Could not parse join keys from '{step.get('on')}': {e}")
@@ -126,35 +129,39 @@ class SQLAssembler:
         ctes = {}
         for island_id, sql in islands.items():
             try:
+                # Parse sub-query text into a mutable SQLGlot AST object
                 island_ast = parse_one(sql, read=self.dialect)
                 
-                # Support Union/Except (Query types) for aliasing
+                # Check for SELECT/QUERY instance compatibility
                 if not isinstance(island_ast, (exp.Select, exp.Query)):
                     ctes[island_id] = island_ast
                     continue
  
-                # A. Inject Missing Keys (with GROUP BY safety)
+                # A. Inject Missing Keys (with GROUP BY safety):
                 if isinstance(island_ast, exp.Select):
+                    # Cache already projected fields to avoid double-select duplication
                     existing_cols = {c.alias_or_name for c in island_ast.expressions}
                     for key in required_keys.get(island_id, []):
                         if key not in existing_cols:
                             logger.debug(f"Surgically injecting key '{key}' into island '{island_id}'")
+                            # Add physical column to selection projections array
                             island_ast.select(key, copy=False)
-                            # Prevent PostgreSQL aggregate errors by adding to GROUP BY if it exists
+                            # If aggregate/group by exists, also append join key to maintain standard group parameters
                             if island_ast.args.get("group"):
                                 island_ast.group_by(key, copy=False)
 
-                # B. Apply Unique Aliasing ({island_id}_{column_name})
-                # Handle Selects and Unions/Set operations by finding all SELECT expressions
+                # B. Apply Unique Aliasing ({island_id}_{column_name}) to prevent namespace conflicts in global stitch:
                 selects = island_ast.find_all(exp.Select)
                 for select in selects:
                     new_projections = []
                     for projection in select.expressions:
                         alias = projection.alias_or_name
                         unique_alias = f"{island_id}_{alias}"
+                        # Rewrite projection alias using standard target name format
                         new_projections.append(projection.as_(unique_alias))
                     select.set("expressions", new_projections)
                 
+                # Save processed AST into ctes map
                 ctes[island_id] = island_ast
             except Exception as e:
                 logger.error(f"Failed to process island {island_id}: {e}")
@@ -163,11 +170,12 @@ class SQLAssembler:
         # ### --- [STEP 3: FINAL STITCHING] --- ###
 
         try:
-            # Initialize root query with the base_task
+            # Resolve root query start table
             base_task_id = plan_dict.get("base_task")
             if not base_task_id:
                 base_task_id = list(islands.keys())[0]
 
+            # Parse select fields list
             raw_select = plan_dict.get("final_select", "*")
             if isinstance(raw_select, str) and "," in raw_select:
                 select_exprs = [s.strip() for s in raw_select.split(",")]
@@ -176,9 +184,10 @@ class SQLAssembler:
             else:
                 select_exprs = raw_select
 
+            # Instantiate standard SQLGlot SELECT chain starting from base task CTE
             root = sqlglot.select(*select_exprs).from_(f"{base_task_id} AS {base_task_id}")
 
-            # Append joins from the plan steps
+            # Append all planned JOIN operations sequentially
             for step in plan_dict.get("steps", []):
                 right = step["right"]
                 root = root.join(
@@ -187,7 +196,7 @@ class SQLAssembler:
                     join_type=step.get("join_type", "INNER").upper()
                 )
 
-            # Add Final Clauses (Where, Order By, Limit)
+            # Append standard analytical clauses if active in join plan contract
             if plan_dict.get("where"):
                 root = root.where(plan_dict["where"])
                 
@@ -197,10 +206,11 @@ class SQLAssembler:
             if plan_dict.get("limit"):
                 root = root.limit(plan_dict["limit"])
 
-            # Attach all islands as CTEs
+            # Surgically attach each processed island AST as a CTE block
             for island_id, ast in ctes.items():
                 root = root.with_(island_id, as_=ast)
 
+            # Pretty print compilation output using target postgres dialect format
             return root.sql(dialect=self.dialect, pretty=True)
         except Exception as e:
             logger.error(f"Failed to stitch query: {e}")
