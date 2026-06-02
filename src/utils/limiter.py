@@ -76,6 +76,7 @@ class GlobalRateLimiter:
         """
         start_time: float = time.time()
         while time.time() - start_time < timeout:
+            sleep_time = 0.0
             with self.lock:
                 now: float = time.time()
                 # 1. Sliding Window Purge (Request & Token Cleanup):
@@ -83,26 +84,28 @@ class GlobalRateLimiter:
                 # This ensures our active capacity aggregates strictly represent the rolling sub-minute window.
                 self.requests = [t for t in self.requests if now - t < 60]
                 self.tokens = [item for item in self.tokens if now - item[0] < 60]
-                
+
                 # 2. Requests Per Minute (RPM) Gating Check:
                 # If the number of requests registered in the active window meets or exceeds our RPM limit,
-                # we block execution, sleep for 500ms, and retry.
+                # we set a sleep flag and release the lock before blocking.
                 if len(self.requests) >= self.rpm_limit:
-                    time.sleep(0.5)
-                    continue
-                
+                    sleep_time = 0.5
+
                 # 3. Tokens Per Minute (TPM) Gating Check:
                 # We calculate rolling token usage. Because we cannot know exact response tokens before calling
-                # the API, we use a conservative approach: if the rolling TPM aggregate exceeds limits, 
-                # we block the thread to avoid HTTP 429 errors from the LLM provider.
-                current_tpm: int = sum(item[1] for item in self.tokens)
-                if current_tpm >= self.tpm_limit:
-                    time.sleep(0.5)
-                    continue
-                
+                # the API, we use a conservative approach: if the rolling TPM aggregate exceeds limits,
+                # we set a sleep flag to block the thread and avoid HTTP 429 errors.
+                elif sum(item[1] for item in self.tokens) >= self.tpm_limit:
+                    sleep_time = 0.5
+
                 # 4. Capacity Available: Register active request timestamp in queue.
-                self.requests.append(now)
-                return True
+                else:
+                    self.requests.append(now)
+                    return True
+
+            # Sleep outside the lock so other threads can proceed independently.
+            if sleep_time > 0:
+                time.sleep(sleep_time)
             
         return False
 
