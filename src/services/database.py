@@ -57,17 +57,28 @@ def get_connection_pool() -> ConnectionPool:
                 logger.info("Initializing database connection pool...")
                 try:
                     # Instantiate ConnectionPool with optimized parameters:
-                    # - max_size=2: Enforces conservative pool capping to prevent connection starvation on Neon free tiers.
-                    # - min_size=1: Ensures at least one pre-warmed connection is warm for fast initial request times.
+                    # - max_size=5: Accommodates parallel workers + checkpointer + store
+                    #   concurrently. Increased from 2 to prevent starvation under load.
+                    # - min_size=1: Ensures at least one pre-warmed connection is warm for
+                    #   fast initial request times.
                     # - timeout=60.0: Generous timeout margin for server cold starts.
-                    # - check=ConnectionPool.check_connection: Active health validation to automatically prune dead sockets.
+                    # - check=ConnectionPool.check_connection: Active health validation to
+                    #   automatically prune dead sockets before handing them to callers.
                     _DB_POOL = ConnectionPool(
-                        conninfo=settings.database_url, 
-                        max_size=2, 
+                        conninfo=settings.database_url,
+                        max_size=5,
                         min_size=1,
                         timeout=60.0,
                         check=ConnectionPool.check_connection,
-                        kwargs={"autocommit": True}
+                        kwargs={
+                            "autocommit": True,
+                            # Keepalives prevent Neon from killing idle serverless connections.
+                            "keepalives": 1,
+                            "keepalives_idle": 30,
+                            "keepalives_interval": 10,
+                            "keepalives_count": 3,
+                            "options": "-c statement_timeout=30000",
+                        }
                     )
                     logger.info("Database connection pool initialized successfully.")
                 except Exception as e:
