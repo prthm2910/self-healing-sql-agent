@@ -40,9 +40,14 @@ class Settings(BaseSettings):
     """
 
     # --- LLM CONFIGURATION ---
-    model_name: str = Field(
-        default="openai/gpt-oss-20b", 
-        description="Target Large Language Model identifier string."
+    chat_model: str = Field(
+        default="meta/llama-3.1-8b-instruct",
+        description="Fast model for classification, conversation, and formatting."
+    )
+
+    reasoning_model: str = Field(
+        default="meta/llama-3.3-70b-instruct",
+        description="Heavy model for SQL generation, decomposition, and healing."
     )
     
     # --- CREDENTIALS AND ENDPOINTS ---
