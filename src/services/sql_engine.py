@@ -6,10 +6,7 @@ from typing import List, Dict, Any, Optional, Set, Tuple
 from urllib.parse import urlparse, urlunparse
 
 import psycopg
-import sqlglot
-from sqlglot import exp, parse_one
 from psycopg_pool import ConnectionPool
-from psycopg.rows import dict_row
 from langsmith import traceable
 
 from src.utils.logger import logger
@@ -251,17 +248,27 @@ class SQLEngine:
         """Retrieves or lazy-initializes the psycopg connection pool for execution.
 
         Returns:
-            ConnectionPool: The active engine connection pool.
+            ConnectionPool: The active engine connection pool targeting the
+            Pagila database instance.
         """
         if self._pool is None:
             # Initialize lazy pool for target database to keep resource utilization optimal
             self._pool = ConnectionPool(
                 conninfo=self.connection_url,
-                max_size=2,
+                max_size=5,
                 min_size=1,
                 timeout=60.0,
                 check=ConnectionPool.check_connection,
-                kwargs={"autocommit": True, "row_factory": dict_row}
+                kwargs={
+                    "autocommit": True,
+                    "row_factory": psycopg.rows.dict_row,
+                    # Keepalives prevent Neon from killing idle serverless connections.
+                    "keepalives": 1,
+                    "keepalives_idle": 30,
+                    "keepalives_interval": 10,
+                    "keepalives_count": 3,
+                    "options": "-c statement_timeout=30000",
+                }
             )
             logger.debug(f"SQLEngine pool initialized for: {self.db_name}")
         return self._pool
