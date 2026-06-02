@@ -51,9 +51,9 @@ class Settings(BaseSettings):
     )
     
     # --- CREDENTIALS AND ENDPOINTS ---
-    groq_api_key: str = Field(
-        default_factory=lambda: os.getenv("GROQ_API_KEY", ""),
-        description="API Authorization credential token for the Groq platform."
+    nvidia_api_key: str = Field(
+        default_factory=lambda: os.getenv("NVIDIA_API_KEY", ""),
+        description="API Authorization credential token for the NVIDIA platform."
     )
     google_api_key: str = Field(
         default_factory=lambda: os.getenv("GOOGLE_API_KEY", ""),
