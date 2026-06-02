@@ -1,10 +1,18 @@
 # ### --- IMPORTS --- ###
 import uuid
+import warnings
 from typing import List, Dict, Any, Union, Optional
 import streamlit as st
 from langsmith import Client
 from langchain_core.messages import AIMessage, HumanMessage, BaseMessage
 from langgraph.graph.state import CompiledStateGraph
+
+# Suppress noisy but benign structured-output warnings from NVIDIA NIM SDK
+warnings.filterwarnings(
+    "ignore",
+    message=".*is not known to support structured output.*",
+    category=UserWarning
+)
 
 from src.core.config import settings
 from src.utils.limiter import rate_limiter
@@ -221,4 +229,3 @@ if st.session_state.pending_prompt:
                 # 4. Release locks and re-run to reset fields
                 st.session_state.is_thinking = False
                 st.rerun()
-st.rerun()
