@@ -12,7 +12,7 @@ from src.services.sql_engine import sql_engine
 from src.services.sql_assembler import sql_assembler
 from src.prompts.sql_agent import get_decomposer_prompt, get_worker_prompt
 from src.workflow.schema.complex_path import DecomposerOutput, WorkerOutput
-from src.workflow.nodes.base import BaseNode, llm
+from src.workflow.nodes.base import BaseNode, llm, reasoning_llm
 
 
 # ### --- [DECOMPOSER NODE] --- ###
@@ -50,10 +50,11 @@ class DecomposerNode(BaseNode):
             Dict[str, Any]: State updates with planned sub_tasks and join_plan.
         """
         # 1. Question Extraction: Locate the latest natural language message from the user.
-        user_question: str = next(
+        content = next(
             (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), 
             ""
         )
+        user_question: str = content if isinstance(content, str) else ""
         
         # 2. Extract Active Anchors and Bridges: Load selected tables and FK relationships from discovery.
         selected_tables: List[str] = state.get("selected_tables", [])
@@ -65,7 +66,7 @@ class DecomposerNode(BaseNode):
         
         # 4. Invoke Decomposer Planning: Compile the user request and schema outline.
         prompt_template = get_decomposer_prompt()
-        chain = prompt_template | llm.with_structured_output(DecomposerOutput)
+        chain = prompt_template | reasoning_llm.with_structured_output(DecomposerOutput)
         res: DecomposerOutput = self.robust_invoke(chain, {
             "skeleton_schema": skeleton_schema,
             "question": user_question
@@ -160,10 +161,10 @@ class WorkerNode(BaseNode):
         logger.info(f"Node: worker_node | Task: {task_id} ({description})")
         
         try:
-            # 3. Retrieve Table Metadata: Load exact, clean column schema lists for tables in this sub-task.
+            # 3. Retrieve Table Metadata: Load annotated schema for tables in this sub-task.
             selected_tables: List[str] = task.get("tables", [])
             required_columns: List[str] = task.get("required_columns", [])
-            partial_schema: Dict[str, List[str]] = sql_engine.get_schema(selected_tables)
+            partial_schema: str = sql_engine.get_schema(selected_tables)
             
             # 4. Generate isolated SQL Subquery: Request LLM to build a standalone SELECT query.
             prompt_template = get_worker_prompt()
@@ -172,7 +173,7 @@ class WorkerNode(BaseNode):
                 "schema": partial_schema,
                 "task_description": description
             })
-            chain = llm.with_structured_output(WorkerOutput)
+            chain = reasoning_llm.with_structured_output(WorkerOutput)
             res: WorkerOutput = self.robust_invoke(chain, prompt_val.to_messages(), WorkerOutput)
             
             # Cleanse markdown fences if present

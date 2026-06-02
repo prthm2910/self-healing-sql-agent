@@ -11,7 +11,7 @@ from src.services.sql_engine import sql_engine
 from src.services.lessons import get_relevant_lessons
 from src.prompts.sql_agent import get_sql_generation_prompt, get_sql_healing_prompt
 from src.workflow.schema.simple_path import SQLGenerationOutput, ExecuteSQLOutput
-from src.workflow.nodes.base import BaseNode, llm, logger
+from src.workflow.nodes.base import BaseNode, llm, reasoning_llm, logger
 from src.workflow.nodes.background_tasks import background_distill_lesson
 
 
@@ -51,10 +51,11 @@ class GenerateSQLNode(BaseNode):
             Dict[str, Any]: State changes with generated SQL query and retry counter.
         """
         # 1. Question Extraction: Get the latest user natural language input.
-        user_question: str = next(
-            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), 
+        content = next(
+            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
             ""
         )
+        user_question: str = content if isinstance(content, str) else ""
         
         # 2. Extract Pruning Schema: Determine which schema level to supply to the LLM to minimize context size.
         selected_columns: Optional[Dict[str, List[str]]] = state.get("selected_columns")
@@ -66,14 +67,13 @@ class GenerateSQLNode(BaseNode):
             logger.info(f"Using SURGICALLY PRUNED schema ({len(selected_columns)} tables)")
             schema_str = str(selected_columns)
         elif selected_tables:
-            # Scenario B (Table filtered): Inject the full column catalogs for only the selected table set.
+            # Scenario B (Table filtered): Inject the annotated column catalogs for the selected table set.
             logger.info(f"Using table-filtered schema ({len(selected_tables)} tables)")
-            full_schema = sql_engine.get_schema_object()
-            schema_str = str({t: full_schema.get(t, []) for t in selected_tables})
+            schema_str = sql_engine.get_schema(selected_tables)
         else:
             # Scenario C (Fallback): Inject the entire database column map (only used for extremely basic setups).
             logger.info("Using full schema fallback")
-            schema_str = str(sql_engine.get_schema_object())
+            schema_str = sql_engine.get_schema()
         
         # 3. Tiered Lesson Retrieval:
         # We query the pgvector semantic store to load global rules, table-specific constraints, and 
@@ -86,7 +86,7 @@ class GenerateSQLNode(BaseNode):
         
         # 4. Invoke SQL Planner: Render prompt parameters and execute structured output call.
         prompt_template = get_sql_generation_prompt()
-        chain = prompt_template | llm.with_structured_output(SQLGenerationOutput)
+        chain = prompt_template | reasoning_llm.with_structured_output(SQLGenerationOutput)
         
         res: SQLGenerationOutput = self.robust_invoke(chain, {
             "schema": schema_str,
@@ -208,56 +208,70 @@ class HealSQLNode(BaseNode):
         # 1. Update retry counter: Track how many healing loops have run for active query.
         retry: int = state.get("retry_count", 0) + 1
         logger.info(f"Node: heal_sql | Attempt: {retry}")
-        
-        # 2. Context retrieval
-        user_question: str = next(
-            m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)
-        )
-        selected_tables: Optional[List[str]] = state.get("selected_tables")
-        
-        # 3. Resolve active schema string to guide correct healing choices
-        full_schema: Dict[str, List[str]] = sql_engine.get_schema_object()
-        schema_str: str = ""
-        if selected_tables:
-            filtered_schema = {t: full_schema.get(t, []) for t in selected_tables}
-            schema_str = str(filtered_schema)
-        else:
-            schema_str = str(full_schema)
-        
-        # 4. Invoke Healer Prompt: Pass the failed query and raw database error to the LLM to get a corrected query.
-        prompt_template = get_sql_healing_prompt()
-        chain = prompt_template | llm.with_structured_output(SQLGenerationOutput)
-        res: SQLGenerationOutput = self.robust_invoke(chain, {
-            "schema": schema_str,
-            "failed_query": state["current_sql"],
-            "error_message": state["sql_error"],
-            "question": user_question
-        }, SQLGenerationOutput)
-        
-        fixed_sql: str = res.sql.strip().replace("```sql", "").replace("```", "")
-        
-        # --- OFFLOAD TO BACKGROUND ---
-        # Mental Model:
-        # Lesson distillation queries the LLM to analyze the delta between the failed and fixed queries.
-        # This takes 1-3 seconds. To prevent the end-user from experiencing this latency during active response
-        # rendering, we offload this work asynchronously to an isolated background daemon thread.
-        if store:
-            state_data: Dict[str, Any] = {
-                "current_sql": state["current_sql"],
-                "sql_error": state["sql_error"],
-                "fixed_sql": fixed_sql,
-                "selected_tables": selected_tables,
-                "user_question": user_question
-            }
-            threading.Thread(
-                target=background_distill_lesson,
-                args=(state_data, store, user_id),
-                daemon=True
-            ).start()
-            logger.info("Lesson distillation offloaded to background thread.")
 
-        # 5. Return fixed SQL and clear previous errors
-        return {"current_sql": fixed_sql, "retry_count": retry, "sql_error": None}
+        try:
+            # 2. Context retrieval
+            content = next(
+                (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+                ""
+            )
+            user_question: str = content if isinstance(content, str) else ""
+            selected_tables: Optional[List[str]] = state.get("selected_tables")
+
+            # 3. Resolve active schema string to guide correct healing choices
+            selected_tables: Optional[List[str]] = state.get("selected_tables")
+            if selected_tables:
+                schema_str: str = sql_engine.get_schema(selected_tables)
+            else:
+                schema_str: str = sql_engine.get_schema()
+
+            # 4. Invoke Healer Prompt: Pass the failed query and raw database error
+            #    to the LLM to get a corrected query.
+            prompt_template = get_sql_healing_prompt()
+            chain = prompt_template | reasoning_llm.with_structured_output(SQLGenerationOutput)
+            res: SQLGenerationOutput = self.robust_invoke(chain, {
+                "schema": schema_str,
+                "failed_query": state["current_sql"],
+                "error_message": state["sql_error"],
+                "question": user_question
+            }, SQLGenerationOutput)
+
+            fixed_sql: str = res.sql.strip().replace("```sql", "").replace("```", "")
+
+            # --- OFFLOAD TO BACKGROUND ---
+            # Mental Model:
+            # Lesson distillation queries the LLM to analyze the delta between the
+            # failed and fixed queries. This takes 1-3 seconds. To prevent the
+            # end-user from experiencing this latency during active response
+            # rendering, we offload this work asynchronously to an isolated
+            # background daemon thread.
+            if store:
+                state_data: Dict[str, Any] = {
+                    "current_sql": state["current_sql"],
+                    "sql_error": state["sql_error"],
+                    "fixed_sql": fixed_sql,
+                    "selected_tables": selected_tables,
+                    "user_question": user_question
+                }
+                threading.Thread(
+                    target=background_distill_lesson,
+                    args=(state_data, store, user_id),
+                    daemon=True
+                ).start()
+                logger.info("Lesson distillation offloaded to background thread.")
+
+            # 5. Return fixed SQL and clear previous errors
+            return {"current_sql": fixed_sql, "retry_count": retry, "sql_error": None}
+
+        except Exception as err:
+            # Ensure retry_count is always persisted so the healing loop
+            # eventually terminates even when the LLM call fails outright.
+            logger.error(f"Healing attempt {retry} failed: {err}", exc_info=True)
+            return {
+                "current_sql": state.get("current_sql", ""),
+                "retry_count": retry,
+                "sql_error": f"Healing attempt failed: {err}",
+            }
 
 
 # ### --- [NODE INSTANTIATION] --- ###

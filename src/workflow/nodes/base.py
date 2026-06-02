@@ -3,7 +3,7 @@
 import json
 import re
 import time
-from typing import Dict, Any, Type, Optional, Union
+from typing import Dict, Any, Type, Optional, Union, List
 
 from langchain_core.runnables import RunnableConfig, RunnableSequence
 from pydantic import BaseModel
@@ -16,6 +16,7 @@ from src.workflow.state import State
 # ### --- [INITIALIZATION] --- ###
 
 llm = get_llm()
+reasoning_llm = get_llm(model=settings.reasoning_model)
 
 
 # ### --- [BASE NODE INTERFACE] --- ###
@@ -179,8 +180,14 @@ Ensure the output is a single valid JSON block enclosed in ```json ... ```.
             try:
                 # Invoke core LLM client with plain instruction string
                 res = raw_llm.invoke(fallback_prompt)
-                content: str = res.content
-                
+                raw_content = res.content
+                content: str = (
+                    raw_content
+                    if isinstance(raw_content, str)
+                    else "\n".join(str(item) for item in raw_content) if isinstance(raw_content, list)
+                    else str(raw_content)
+                )
+
                 # Extract JSON substring from markdown fences (```json ... ```)
                 json_match = re.search(r"```json\s*(.*?)\s*```", content, re.DOTALL)
                 json_str: str = json_match.group(1) if json_match else content

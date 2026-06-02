@@ -143,9 +143,11 @@ class FormatSQLResponseNode(BaseNode):
             Dict[str, Any]: State changes containing rendered AIMessage response contents.
         """
         # 1. Fetch Execution States: Retrieve query string, raw result list, and the aggregated flag.
-        user_question: str = next(
-            m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)
+        content = next(
+            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            ""
         )
+        user_question: str = content if isinstance(content, str) else ""
         raw_results: List[Dict[str, Any]] = state.get("sql_results", [])
         is_aggregated: bool = state.get("is_aggregated", False)
         

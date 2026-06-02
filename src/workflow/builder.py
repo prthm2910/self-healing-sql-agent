@@ -1,5 +1,5 @@
 # ### --- IMPORTS --- ###
-from typing import Literal, List, Dict, Any, Union, Optional
+from typing import Literal, List, Dict, Any, Optional, cast
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
@@ -125,7 +125,7 @@ def build_chatbot_graph(checkpointer: Optional[PostgresSaver] = None) -> Compile
     Returns:
         A compiled and ready CompiledStateGraph instance.
     """
-    pool = get_connection_pool()
+    pool = cast(Any, get_connection_pool())
     if checkpointer is None:
         checkpointer = PostgresSaver(pool)
         checkpointer.setup()
