@@ -1,10 +1,11 @@
 # ### --- [IMPORTS & CONFIGURATION] --- ###
 import time
-from typing import Any, Dict, Optional, Union, List
+from typing import Any, cast, Dict, Optional, Union, List
 
-from langchain_groq import ChatGroq
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
+from pydantic import SecretStr
 
 from src.utils.limiter import rate_limiter
 from src.core.config import settings
@@ -15,16 +16,16 @@ from src.utils.logger import logger
 
 # [Elaborative Breakdown]
 # API Resiliency and Token-Bucket Rate Limiting:
-# Outbound calls to external LLM providers (like Groq) are highly vulnerable to
+# Outbound calls to external LLM providers (like NVIDIA NIM) are highly vulnerable to
 # rate limits (RPM/TPM - Requests/Tokens Per Minute) and sudden network failures.
-# We wrap the core ChatGroq client in LoggedChatGroq to intercept all invokes,
+# We wrap the core ChatNVIDIA client in LoggedChatNVIDIA to intercept all invokes,
 # enforcing a token-bucket rate limiter immediately before sending requests.
 #
 # If a minute limit (RPM/TPM HTTP 429) is caught, the client executes an exponential
 # wait-and-retry sequence. If a daily limit (RPD/TPD) is hit, it intercepts and throws
 # a terminal exception immediately, preventing futile network calls and saving compute.
-class LoggedChatGroq(ChatGroq):
-    """A thread-safe, rate-limited, and self-healing subclass of ChatGroq.
+class LoggedChatNVIDIA(ChatNVIDIA):
+    """A thread-safe, rate-limited, and self-healing subclass of ChatNVIDIA.
 
     Provides automatic minute-limit backing off, token consumption recording, and
     immediate daily-quota exhaustion intercepting.
@@ -60,18 +61,18 @@ class LoggedChatGroq(ChatGroq):
                 logger.error("Global Rate Limit Timeout!")
                 raise RuntimeError("API Rate Limit Exceeded and wait timeout reached.")
 
-            logger.info(f"Invoking Groq ({self.model_name}) (Attempt {attempt + 1}/{max_retries})")
+            logger.info(f"Invoking NVIDIA ({self.model}) (Attempt {attempt + 1}/{max_retries})")
             
             try:
-                # 2. Delegate directly to the parent ChatGroq client using standard LangChain protocol
-                response = super().invoke(input, config, **kwargs)
+                # 2. Delegate directly to the parent ChatNVIDIA client using standard LangChain protocol
+                response = super().invoke(cast(Any, input), config, **kwargs)
                 
                 # 3. Dynamic Token Accounting: Extract actual tokens consumed from LLM response metadata
                 usage = getattr(response, "usage_metadata", None)
                 if usage:
                     # Feed actual token count back to the sliding window tracker to maintain correct TPM
                     rate_limiter.record_usage(usage.get("total_tokens", 0))
-                    logger.info(f"Groq invocation complete. Tokens: {usage}")
+                    logger.info(f"NVIDIA invocation complete. Tokens: {usage}")
                 return response
                 
             except Exception as e:
@@ -84,7 +85,7 @@ class LoggedChatGroq(ChatGroq):
                     
                     if is_daily:
                         logger.error("DAILY QUOTA EXCEEDED! Account exhausted for 24h.")
-                        raise RuntimeError("Groq Daily Quota Exceeded. Please wait 24h or use a different key.") from e
+                        raise RuntimeError("NVIDIA Daily Quota Exceeded. Please wait 24h or use a different key.") from e
                     
                     # Minute Limit Check: RPM/TPM limit hit; block calling thread for 10s and retry.
                     logger.warning("Minute Limit reached. Waiting 10s before retry...")
@@ -93,26 +94,29 @@ class LoggedChatGroq(ChatGroq):
                     continue
                 
                 # Non-rate-limit errors are propagated up immediately for custom validators or healers to intercept
-                logger.error(f"Groq invocation failed: {e}", exc_info=True)
+                logger.error(f"NVIDIA invocation failed: {e}", exc_info=True)
                 raise
 
-        raise RuntimeError(f"Failed to invoke Groq after {max_retries} attempts.")
+        raise RuntimeError(f"Failed to invoke NVIDIA after {max_retries} attempts.")
 
 
 # ### --- [CLIENT FACTORY FUNCTION] --- ###
 
-def get_llm() -> LoggedChatGroq:
-    """Factory to instantiate and return the logged and rate-limited ChatGroq provider.
+def get_llm(*, model: Optional[str] = None) -> LoggedChatNVIDIA:
+    """Factory to instantiate and return the logged and rate-limited ChatNVIDIA provider.
+
+    Args:
+        model: Override model identifier. Falls back to settings.chat_model.
 
     Returns:
-        LoggedChatGroq: The configured, ready-to-invoke LLM client instance.
+        LoggedChatNVIDIA: The configured, ready-to-invoke LLM client instance.
     """
-    model: str = settings.model_name
-    api_key: str = settings.groq_api_key
-    
-    logger.debug(f"Instantiating ChatGroq (model: {model})")
-    return LoggedChatGroq(
-        model=model,
-        groq_api_key=api_key,
+    model_name: str = model or settings.chat_model
+    api_key: str = settings.nvidia_api_key
+
+    logger.debug(f"Instantiating ChatNVIDIA (model: {model_name})")
+    return LoggedChatNVIDIA(
+        model=model_name,
+        nvidia_api_key=SecretStr(api_key), # type: ignore
         temperature=0
     )
