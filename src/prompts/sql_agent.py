@@ -50,7 +50,7 @@ STRICT RULES:
 1. Provide a PostgreSQL query to answer the user's question. Populate the 'sql' field of the structured output.
 2. Answer ONLY the specific question asked. Do not include extra columns or data not requested.
 3. Use standard PostgreSQL syntax.
-4. Always limit results to a maximum of 50 unless requested otherwise.
+4. Always limit results to a maximum of 50 unless requested otherwise. **Exception**: Do NOT add LIMIT to queries that use aggregate functions (COUNT, SUM, AVG, MAX, MIN) or GROUP BY — the user needs the complete aggregated result.
 5. NO HALLUCINATIONS: Do not assume columns exist (e.g., 'name', 'country', 'total_amount') unless you see them in the SCHEMA.
 6. STRUCTURAL INTEGRITY: If you need to filter by 'country', you MUST join via 'address' -> 'city' -> 'country'.
 7. STRING MATCHING: Always use case-insensitive matching (ILIKE) for user-provided names or locations unless specified otherwise.
@@ -73,7 +73,7 @@ def get_sql_healing_prompt() -> ChatPromptTemplate:
         A compiled ChatPromptTemplate for self-healing SQL debug operations.
     """
     return ChatPromptTemplate.from_messages([
-        ("system", """You are a SQL debugging expert. 
+        ("system", """You are a SQL debugging expert.
 A previous SQL query failed. FIX it based on the error and schema.
 
 DATABASE SCHEMA:
@@ -83,8 +83,9 @@ FAILED QUERY: {failed_query}
 ERROR MESSAGE: {error_message}
 
 INSTRUCTIONS:
-- Provide a CORRECTED PostgreSQL query that answers ONLY the user's question.
-- ONLY return the SQL query. No explanation.
+- Provide a CORRECTED PostgreSQL query that answers the user's question.
+- Put your brief reasoning in the 'thought_process' field of the structured output.
+- Do NOT include explanations after the SQL — use the structured output fields only.
 """),
         ("human", "Fix the query for: {question}")
     ])
@@ -116,9 +117,12 @@ SKELETON SCHEMA (Tables & FKs):
 ### RULES:
 - Use 'inner' joins by default.
 - **JOIN KEY PROTECTION**: Ensure 'required_columns' includes the Join Key (e.g., 'film_id', 'customer_id').
-- **NO HALLUCINATIONS**: Do not assume columns exist on a table just because they are related. 
+- **NO HALLUCINATIONS**: Do not assume columns exist on a table just because they are related.
   - Example: 'category' is NOT in the 'film' table. You MUST use 'film_category' and 'category' tables.
   - Example: 'revenue' is calculated from the 'payment' or 'rental' tables.
+- **FILTER PROPAGATION (CRITICAL)**: If the user's question includes a filter condition (e.g. "movies longer than 2 hours", "from year 2006", "by actor X"), that filter MUST be applied BEFORE aggregation.
+  - WRONG: Create a separate filter CTE and only join it at the final SELECT — this filters which rows appear but NOT the aggregated data.
+  - RIGHT: Include the WHERE filter condition inside the SAME CTE that computes aggregations, or join the filtered film set into the FROM clause of the aggregation query before any SUM/COUNT.
 - Isolation: Each task should handle its own tables.
 - You MUST provide both 'sub_tasks' AND 'join_plan'. Do not skip the join_plan.
 

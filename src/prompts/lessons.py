@@ -38,6 +38,19 @@ Create a "Golden standard Lesson" from this SQL mistake. Output MUST be valid JS
 FAIL: {failed_sql}
 ERROR: {sql_error}
 FIX: {fixed_sql}
+
+FIELD GUIDANCE:
+- "is_global": true if this lesson applies to ALL queries (e.g. syntax rules, schema-wide join patterns), false if table-specific.
+- "tags": short labels for similarity matching (e.g. ["join_keys", "film_category", "group_by"]).
+- "title": one-line summary of the lesson (e.g. "Always join film_category via category_id, not film_id").
+- "body": the actionable rule. Phrase it as a general principle, NOT specific to this exact query. Explain what went wrong and how to fix it.
+- "ending_note": brief encouragement or summary.
+- "thought_process": your step-by-step reasoning.
+
+RULES:
+1. GENERALIZE: Extract a reusable principle that applies beyond this specific query. Do not include specific film titles, names, or numeric values in the lesson.
+2. FOCUS ON THE ROOT CAUSE, not the surface symptom. (e.g. "GROUP BY requires all non-aggregate columns" not "this query had wrong columns").
+3. If the error was trivial (typo, missing comma, wrong keyword case), set "is_global": false and keep the lesson very short.
 """)
     ])
 

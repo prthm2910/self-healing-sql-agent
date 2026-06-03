@@ -78,6 +78,7 @@ def get_entity_extraction_prompt() -> ChatPromptTemplate:
         ("system", """Identify the core database entities and filters mentioned in this question.
 
 Question: "{last_msg}"
+Available Tables: {all_tables}
 Example Entities: 'Canada', 'Action', 'most rentals', 'spent'.
 
 ### INSTRUCTIONS:
