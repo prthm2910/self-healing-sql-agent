@@ -84,7 +84,7 @@ class Settings(BaseSettings):
         description="Special trigger tag parsed by the LLM response flow to invoke long-term storage."
     )
     rate_limit_rpm: int = Field(
-        default=25,
+        default=30,
         description="Maximum allowed requests per minute per user context."
     )
     context_window_size: int = Field(
