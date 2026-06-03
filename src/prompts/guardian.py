@@ -42,9 +42,9 @@ DOMAINS INFO:
 {domain_summary}
 
 ### CLASSIFICATION RULES (Output JSON keys: "intent", "thought_process"):
-- SQL: The new message, combined with the previous context, now forms a clear and valid SQL request about the domain.
+- SQL: The new message, combined with the previous context, now forms a clear and valid SQL request about the domain. ALSO if the user pivots to a new valid request OR sends a greeting/casual message.
 - CLARIFY: The message is related but still vague. We stay in the clarification loop.
-- DENY: The user has clearly changed the subject to something irrelevant OR is asking to modify data.
+- DENY: The user asks to MODIFY data (INSERT/UPDATE/DELETE/DROP) or is potentially harmful.
 
 Note: If the user provides a COMPLETELY NEW but valid SQL request (e.g., pivoting from 'films' to 'customers'), classify as SQL and we will switch context.
 """)
@@ -70,9 +70,9 @@ DOMAINS INFO:
 {domain_summary}
 
 ### CLASSIFICATION RULES (Output JSON keys: "intent", "thought_process"):
-- SQL: The request is a clear, actionable question about querying or analyzing data from the domain.
+- SQL: The request is a clear, actionable question about querying or analyzing data from the domain. ALSO includes greetings, thanks, or casual chat — these will be handled by the downstream chatbot node.
 - CLARIFY: The request is related to the domain but is too vague, ambiguous, or underspecified to generate SQL for (e.g., "Tell me about films" without criteria).
-- DENY: The request is NOT about the domain, asks to MODIFY data, or is general chitchat.
+- DENY: The request asks to MODIFY data (INSERT/UPDATE/DELETE/DROP), is completely unrelated to any database, or is potentially harmful (e.g., "delete all records", "show me passwords").
 
 User Message: "{last_msg}"
 """)
