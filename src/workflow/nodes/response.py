@@ -159,26 +159,30 @@ class FormatSQLResponseNode(BaseNode):
             output_parts.append("No results found.")
         elif is_aggregated:
             # Scenario B: Aggregated single-cell result (e.g., SELECT count(*)).
-            # Prompt the LLM to write a natural language summary to give context to this single number.
-            prompt_template = get_sql_response_format_prompt()
-            chain = prompt_template | llm.with_structured_output(SQLResponse)
-            try:
-                response: SQLResponse = self.robust_invoke(chain, {
-                    "question": user_question,
-                    "query": state.get("current_sql", ""),
-                    "data": str(raw_results)
-                }, SQLResponse)
-                
-                if response.summary:
-                    output_parts.append(response.summary)
-                else:
-                    # Fallback if LLM output fails
+            if not raw_results:
+                # Edge case: aggregate query returned zero rows (e.g. COUNT with a filter matching nothing)
+                output_parts.append("No matching results found.")
+            else:
+                # Prompt the LLM to write a natural language summary to give context to this single number.
+                prompt_template = get_sql_response_format_prompt()
+                chain = prompt_template | llm.with_structured_output(SQLResponse)
+                try:
+                    response: SQLResponse = self.robust_invoke(chain, {
+                        "question": user_question,
+                        "query": state.get("current_sql", ""),
+                        "data": str(raw_results)
+                    }, SQLResponse)
+
+                    if response.summary:
+                        output_parts.append(response.summary)
+                    else:
+                        # Fallback if LLM output fails
+                        val = list(raw_results[0].values())[0]
+                        output_parts.append(f"The result is {val}.")
+                except Exception as e:
+                    logger.error(f"Failed to generate summary: {e}")
                     val = list(raw_results[0].values())[0]
                     output_parts.append(f"The result is {val}.")
-            except Exception as e:
-                logger.error(f"Failed to generate summary: {e}")
-                val = list(raw_results[0].values())[0]
-                output_parts.append(f"The result is {val}.")
         else:
             # Scenario C (Zero-Latency Optimization): Detailed multi-row records.
             # Avoid sending long lists to the LLM to save token cost and eliminate API latency.

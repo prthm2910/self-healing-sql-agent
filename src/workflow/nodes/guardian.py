@@ -118,10 +118,15 @@ class GuardianNode(BaseNode):
         
         if res.intent == "CLARIFY":
             # Scenario B (Clarification Gating): Query is vague. Lock conversation state and request info.
+            # Structure context with turn markers so the locked guardian can parse each turn clearly.
+            if is_locked:
+                new_vague_ctx = f"{vague_context}\nTurn update: {last_msg}"
+            else:
+                new_vague_ctx = f"Original request: {last_msg}"
             return {
                 "intent": "CLARIFY",
                 "is_awaiting_clarification": True,
-                "vague_query_context": last_msg if not is_locked else f"{vague_context} + {last_msg}",
+                "vague_query_context": new_vague_ctx,
                 "agent_logs": logs
             }
         

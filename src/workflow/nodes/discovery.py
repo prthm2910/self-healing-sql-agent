@@ -57,7 +57,7 @@ class ClassifierNode(BaseNode):
         # 1. Context Extraction: Retrieve the last 3 user messages to capture conversational history.
         # This is critical for resolving context in multi-turn dialogues (e.g., resolving pronouns or "try again" requests).
         human_msgs: List[str] = [m.content for m in state["messages"] if isinstance(m, HumanMessage)][-3:]
-        context_msg: str = " | ".join(human_msgs)
+        context_msg: str = " ".join(f"Turn {i+1}: \"{msg}\"" for i, msg in enumerate(human_msgs))
         last_msg: str = human_msgs[-1] if human_msgs else ""
         
         logger.info(f"Node: classifier_node | Classifying message: {last_msg[:30]} | Context: {context_msg[:50]}...")
@@ -129,7 +129,10 @@ class AnchorSelectorNode(BaseNode):
         # We prompt the LLM to extract domain-level entities (e.g., "movies", "categories", "clients").
         # Isolating semantic entities here avoids directly guessing database tables, reducing hallucination.
         entity_template = get_entity_extraction_prompt()
-        entity_prompt_val = entity_template.invoke({"last_msg": last_msg})
+        entity_prompt_val = entity_template.invoke({
+            "last_msg": last_msg,
+            "all_tables": all_tables
+        })
         entity_chain = llm.with_structured_output(AnchorSelection)
         entity_res: AnchorSelection = self.robust_invoke(entity_chain, entity_prompt_val.to_messages(), AnchorSelection)
         entities: str = ", ".join(entity_res.anchors)

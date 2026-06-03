@@ -219,7 +219,6 @@ class HealSQLNode(BaseNode):
             selected_tables: Optional[List[str]] = state.get("selected_tables")
 
             # 3. Resolve active schema string to guide correct healing choices
-            selected_tables: Optional[List[str]] = state.get("selected_tables")
             if selected_tables:
                 schema_str: str = sql_engine.get_schema(selected_tables)
             else:
