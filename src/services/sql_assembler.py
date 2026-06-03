@@ -206,9 +206,19 @@ class SQLAssembler:
             if plan_dict.get("limit"):
                 root = root.limit(plan_dict["limit"])
 
-            # Surgically attach each processed island AST as a CTE block
+            # Collect all island IDs referenced in the join plan to prune dead CTEs
+            referenced_islands = {base_task_id}
+            for step in plan_dict.get("steps", []):
+                referenced_islands.add(step.get("left", ""))
+                referenced_islands.add(step.get("right", ""))
+            referenced_islands.discard("")
+
+            # Surgically attach only referenced island ASTs as CTE blocks
             for island_id, ast in ctes.items():
-                root = root.with_(island_id, as_=ast)
+                if island_id in referenced_islands:
+                    root = root.with_(island_id, as_=ast)
+                else:
+                    logger.info(f"Pruning unreferenced CTE: {island_id}")
 
             # Pretty print compilation output using target postgres dialect format
             return root.sql(dialect=self.dialect, pretty=True)
