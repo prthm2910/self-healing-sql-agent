@@ -1,4 +1,4 @@
-streamlit
+gradio>=5.50
 langchain
 langchain-openai
 langchain-groq
